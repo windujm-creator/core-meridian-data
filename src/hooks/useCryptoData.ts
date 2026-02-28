@@ -11,6 +11,7 @@ import { useCrypto, useCryptoDispatch } from '@/contexts/CryptoContext';
 import { getReconnectDelay, type CryptoAsset } from '@/lib/formatters';
 import { useWebTransport } from '@/hooks/useWebTransport';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
+import { cgFetch } from '@/lib/cgCache';
 
 const SYMBOLS = Object.freeze([
   'btcusdt','ethusdt','solusdt','bnbusdt','xrpusdt',
@@ -189,7 +190,6 @@ export function useCryptoData() {
       if (!res.ok || !mountedRef.current) return;
       const json = await res.json() as { data: Record<string, unknown> };
       const d = json.data;
-      if (!mountedRef.current) return;
       dispatch({
         type: 'UPDATE_GLOBAL',
         payload: {

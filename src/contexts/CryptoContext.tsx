@@ -171,6 +171,10 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(cryptoReducer, initialState);
   const stateValue = useMemo(() => state, [state]);
 
+  // push98: staleRef — hindari stale closure di enhancedDispatch
+  const stateRef = useRef(state);
+  useEffect(() => { stateRef.current = state; }, [state]);
+
   // ── SharedArrayBuffer ring buffer (Phase 7) ──────────────────────────────
   const { write: sbWrite, readLast: sbReadLast, supported: sbSupported } = useSharedBuffer();
   const sbWriteRef = useRef(sbWrite);
@@ -284,7 +288,7 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
       if (firstTick?.price) sbWriteRef.current(firstTick.price);
 
       if (workerReadyRef.current && workerRef.current) {
-        workerRef.current.postMessage({ type: 'MERGE_PRICES', assets: state.assets, updates: action.payload });
+        workerRef.current.postMessage({ type: 'MERGE_PRICES', assets: stateRef.current.assets, updates: action.payload });
         bcRef.current?.postMessage({ type: 'PRICE_UPDATE', payload: action.payload } satisfies BCMessage);
         return;
       }
@@ -295,7 +299,9 @@ export function CryptoProvider({ children }: { children: ReactNode }) {
     if (action.type === 'UPDATE_FEAR_GREED') bcRef.current?.postMessage({ type: 'FNG_UPDATE', payload: action.payload } satisfies BCMessage);
     if (action.type === 'SET_WS_STATUS')    bcRef.current?.postMessage({ type: 'WS_STATUS', status: action.payload } satisfies BCMessage);
     dispatch(action);
-  }, [state]);
+  // push98: empty deps — stateRef.current selalu fresh, tidak perlu [state]
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <SharedBufferContext.Provider value={sharedBufferAPI}>
