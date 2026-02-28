@@ -3,3 +3,5 @@
 node_modules/
 extracted/
 .vercel/
+
+push*.mjs
