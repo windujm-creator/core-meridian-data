@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- PWA -->
+    <meta name="theme-color" content="#60a5fa" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#2563eb" media="(prefers-color-scheme: light)" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="ZM Terminal" />
+    <link rel="manifest" href="/manifest.json" />
+
+    <!-- SEO -->
+    <title>ZERØ MERIDIAN — Crypto Intelligence Terminal</title>
+    <meta name="description" content="Real-time on-chain crypto intelligence. Live prices, derivatives, order book, AI signals. Always free." />
+    <meta property="og:title" content="ZERØ MERIDIAN" />
+    <meta property="og:description" content="Real-time crypto intelligence terminal" />
+    <meta property="og:type" content="website" />
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+
+    <!-- Preconnect -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="preconnect" href="https://api.coingecko.com" />
+    <link rel="preconnect" href="https://stream.binance.com" />
+    <link rel="dns-prefetch" href="https://fstream.binance.com" />
+    <link rel="dns-prefetch" href="https://fapi.binance.com" />
+    <link rel="dns-prefetch" href="https://coin-images.coingecko.com" />
+
+    <!-- Fonts -->
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

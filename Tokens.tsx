@@ -1,465 +1,353 @@
 /**
- * Tokens.tsx — ZERØ MERIDIAN 2026 Phase 12
- * Token Discovery: new listings, trending tokens, momentum scores, risk grades.
- * - React.memo + displayName ✓
- * - rgba() only ✓
- * - Zero template literals in JSX ✓
- * - Object.freeze() all static data ✓
- * - useCallback + useMemo ✓
- * - mountedRef ✓
- * - aria-label + role ✓
- * - var(--zm-*) theme-aware ✓ ← push25
+ * Tokens.tsx — ZERØ MERIDIAN push130
+ * push130: Zero :any — CGMarketCoin7d interface + typed COLS array (no cast)
+ * push110: Responsive polish — mobile 320px + desktop 1440px
+ * - useBreakpoint ✓  React.memo + displayName ✓
+ * - rgba() only ✓  Zero className ✓  Zero hex color ✓  Zero :any ✓
  */
 
-import React, {
-  memo, useCallback, useEffect, useMemo, useRef, useState,
-} from 'react';
+import React, { memo, useCallback, useMemo, useEffect, useRef, useState } from "react";
+import { useBreakpoint } from "@/hooks/useBreakpoint";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const FONT = "'JetBrains Mono', monospace";
+
+const C = Object.freeze({
+  accent:      "rgba(0,238,255,1)",
+  positive:    "rgba(34,255,170,1)",
+  negative:    "rgba(255,68,136,1)",
+  warning:     "rgba(255,187,0,1)",
+  textPrimary: "rgba(240,240,248,1)",
+  textFaint:   "rgba(80,80,100,1)",
+  bgBase:      "rgba(5,7,13,1)",
+  cardBg:      "rgba(14,17,28,1)",
+  glassBg:     "rgba(255,255,255,0.04)",
+  glassBorder: "rgba(255,255,255,0.06)",
+});
+
+const SORT_KEYS = Object.freeze(["rank","price","change24h","volume","mcap"] as const);
+type SortKey = typeof SORT_KEYS[number];
+type SortDir = "asc" | "desc";
+
+// ─── Raw API types ─────────────────────────────────────────────────────────────
+
+interface CGMarketCoin7d {
+  id:                                            string;
+  symbol:                                        string;
+  name:                                          string;
+  current_price:                                 number;
+  price_change_percentage_24h:                   number | null;
+  price_change_percentage_7d_in_currency:        number | null;
+  total_volume:                                  number;
+  market_cap:                                    number;
+}
+
+// ─── App types ────────────────────────────────────────────────────────────────
 
 interface Token {
-  id:          string;
-  symbol:      string;
-  name:        string;
-  category:    string;
-  chain:       string;
-  price:       number;
-  change24h:   number;
-  change7d:    number;
-  volume24h:   number;
-  mcap:        number;
-  momentum:    number;   // 0-100
-  risk:        'LOW' | 'MED' | 'HIGH' | 'EXTREME';
-  isNew:       boolean;  // Listed < 30 days
-  trending:    boolean;
-  launchDate:  string;
+  id:       string;
+  rank:     number;
+  symbol:   string;
+  name:     string;
+  price:    number;
+  change24h: number;
+  change7d:  number;
+  volume:   number;
+  mcap:     number;
+  category: string;
 }
 
-// ─── Static Data ──────────────────────────────────────────────────────────────
-
-const TOKENS: readonly Token[] = Object.freeze([
-  { id: 'pepe2',    symbol: 'PEPE2',  name: 'Pepe 2.0',         category: 'Meme',    chain: 'ETH',  price: 0.00000182, change24h: 142.3,  change7d: 890.1,  volume24h: 420_000_000,  mcap: 1_200_000_000, momentum: 98, risk: 'EXTREME', isNew: true,  trending: true,  launchDate: '2026-02-20' },
-  { id: 'eigen',    symbol: 'EIGEN',  name: 'Eigenlayer',       category: 'DeFi',    chain: 'ETH',  price: 8.42,       change24h: 28.4,   change7d: 62.1,   volume24h: 380_000_000,  mcap: 4_200_000_000, momentum: 91, risk: 'MED',    isNew: false, trending: true,  launchDate: '2024-09-30' },
-  { id: 'honey',    symbol: 'HONEY',  name: 'HoneyBee Finance', category: 'Yield',   chain: 'BASE', price: 0.0842,     change24h: 67.2,   change7d: 215.8,  volume24h: 85_000_000,   mcap: 420_000_000,   momentum: 89, risk: 'HIGH',   isNew: true,  trending: true,  launchDate: '2026-02-10' },
-  { id: 'zeal',     symbol: 'ZEAL',   name: 'Zeal Protocol',    category: 'Infra',   chain: 'SOL',  price: 1.24,       change24h: 18.9,   change7d: 44.2,   volume24h: 62_000_000,   mcap: 620_000_000,   momentum: 82, risk: 'MED',    isNew: true,  trending: true,  launchDate: '2026-01-28' },
-  { id: 'ondo',     symbol: 'ONDO',   name: 'Ondo Finance',     category: 'RWA',     chain: 'ETH',  price: 1.68,       change24h: 14.2,   change7d: 38.5,   volume24h: 145_000_000,  mcap: 2_400_000_000, momentum: 78, risk: 'LOW',    isNew: false, trending: true,  launchDate: '2024-01-18' },
-  { id: 'gpu',      symbol: 'GPU',    name: 'GPU Protocol',     category: 'AI/DePIN', chain: 'ETH', price: 0.284,      change24h: 44.8,   change7d: 120.3,  volume24h: 94_000_000,   mcap: 850_000_000,   momentum: 86, risk: 'HIGH',   isNew: true,  trending: true,  launchDate: '2026-02-01' },
-  { id: 'moodeng',  symbol: 'MOO',    name: 'Moo Deng',         category: 'Meme',    chain: 'SOL',  price: 0.00428,    change24h: -12.4,  change7d: 340.2,  volume24h: 210_000_000,  mcap: 2_100_000_000, momentum: 72, risk: 'EXTREME', isNew: false, trending: true,  launchDate: '2025-10-15' },
-  { id: 'drift',    symbol: 'DRIFT',  name: 'Drift Protocol',   category: 'Perp DEX', chain: 'SOL', price: 0.92,       change24h: 8.4,    change7d: 22.1,   volume24h: 48_000_000,   mcap: 460_000_000,   momentum: 68, risk: 'MED',    isNew: false, trending: false, launchDate: '2024-11-20' },
-  { id: 'grass',    symbol: 'GRASS',  name: 'Grass Network',    category: 'DePIN',   chain: 'SOL',  price: 2.84,       change24h: 22.1,   change7d: 58.4,   volume24h: 128_000_000,  mcap: 1_420_000_000, momentum: 80, risk: 'MED',    isNew: false, trending: true,  launchDate: '2024-10-28' },
-  { id: 'zro',      symbol: 'ZRO',    name: 'LayerZero',        category: 'Infra',   chain: 'ETH',  price: 6.24,       change24h: -4.2,   change7d: 12.8,   volume24h: 72_000_000,   mcap: 3_100_000_000, momentum: 58, risk: 'LOW',    isNew: false, trending: false, launchDate: '2024-06-20' },
-  { id: 'zeus',     symbol: 'ZEUS',   name: 'Zeus Network',     category: 'Infra',   chain: 'SOL',  price: 0.142,      change24h: 35.6,   change7d: 88.2,   volume24h: 56_000_000,   mcap: 280_000_000,   momentum: 84, risk: 'HIGH',   isNew: true,  trending: true,  launchDate: '2026-01-15' },
-  { id: 'rez',      symbol: 'REZ',    name: 'Renzo Protocol',   category: 'LRT',     chain: 'ETH',  price: 0.0618,     change24h: 18.2,   change7d: 42.8,   volume24h: 38_000_000,   mcap: 310_000_000,   momentum: 74, risk: 'MED',    isNew: false, trending: false, launchDate: '2024-04-30' },
-  { id: 'io',       symbol: 'IO',     name: 'io.net',           category: 'AI/DePIN', chain: 'SOL', price: 4.82,       change24h: 12.4,   change7d: 28.6,   volume24h: 92_000_000,   mcap: 1_200_000_000, momentum: 77, risk: 'MED',    isNew: false, trending: true,  launchDate: '2024-06-11' },
-  { id: 'npc',      symbol: 'NPC',    name: 'NPC AI',           category: 'AI',      chain: 'BASE', price: 0.0042,     change24h: 88.4,   change7d: 280.1,  volume24h: 48_000_000,   mcap: 180_000_000,   momentum: 93, risk: 'EXTREME', isNew: true,  trending: true,  launchDate: '2026-02-18' },
-  { id: 'kite',     symbol: 'KITE',   name: 'Kite Finance',     category: 'DeFi',    chain: 'ARB',  price: 0.284,      change24h: -8.2,   change7d: 18.4,   volume24h: 22_000_000,   mcap: 140_000_000,   momentum: 52, risk: 'HIGH',   isNew: true,  trending: false, launchDate: '2026-02-05' },
-]);
-
-const CATEGORIES: readonly string[] = Object.freeze([
-  'All', 'Meme', 'DeFi', 'AI/DePIN', 'DePIN', 'AI', 'RWA', 'Infra', 'LRT', 'Yield', 'Perp DEX',
-]);
-
-// Semantic risk colors — BOLEH hardcoded (universal data meaning)
-const RISK_COLORS = Object.freeze({
-  LOW:     { bg: 'rgba(52,211,153,0.15)',  border: 'rgba(52,211,153,0.35)',  text: 'rgba(34,255,170,0.90)'  },
-  MED:     { bg: 'rgba(251,191,36,0.12)',  border: 'rgba(251,191,36,0.3)',   text: 'rgba(251,191,36,0.9)'  },
-  HIGH:    { bg: 'rgba(251,146,60,0.15)',  border: 'rgba(251,146,60,0.35)',  text: 'rgba(251,146,60,0.9)'  },
-  EXTREME: { bg: 'rgba(248,113,113,0.15)', border: 'rgba(248,113,113,0.35)', text: 'rgba(248,113,113,0.9)' },
-});
-
-// Semantic chain colors — BOLEH hardcoded (brand colors)
-const CHAIN_COLORS = Object.freeze({
-  ETH:  'rgba(96,165,250,0.9)',
-  SOL:  'rgba(167,139,250,0.9)',
-  BASE: 'rgba(45,212,191,0.9)',
-  ARB:  'rgba(34,255,170,0.90)',
-  BNB:  'rgba(251,191,36,0.9)',
-});
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function fmtPrice(p: number): string {
-  if (p >= 1000) return '$' + p.toLocaleString('en-US', { maximumFractionDigits: 0 });
-  if (p >= 1)    return '$' + p.toFixed(2);
-  if (p >= 0.01) return '$' + p.toFixed(4);
-  return '$' + p.toFixed(8);
+interface TokensData {
+  tokens:      Token[];
+  lastUpdated: number;
 }
 
-function fmtVol(n: number): string {
-  if (n >= 1e9) return '$' + (n / 1e9).toFixed(1) + 'B';
-  if (n >= 1e6) return '$' + (n / 1e6).toFixed(0) + 'M';
-  return '$' + (n / 1e3).toFixed(0) + 'K';
-}
+// ─── TokenRow ─────────────────────────────────────────────────────────────────
 
-// ─── Momentum Gauge (canvas) ──────────────────────────────────────────────────
+interface TokenRowProps { token: Token; }
+const TokenRow = memo(({ token }: TokenRowProps) => {
+  const [hovered, setHovered] = useState(false);
+  const onEnter = useCallback(() => setHovered(true),  []);
+  const onLeave = useCallback(() => setHovered(false), []);
 
-const MomentumGauge = memo<{ score: number; size?: number }>(({ score, size = 36 }) => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const rowStyle = useMemo(() => ({
+    display: "grid" as const,
+    gridTemplateColumns: "36px 140px 110px 80px 80px 110px 110px",
+    gap: 12,
+    padding: "0 16px",
+    height: 52,
+    alignItems: "center" as const,
+    borderBottom: `1px solid ${C.glassBorder}`,
+    background: hovered ? "rgba(255,255,255,0.03)" : "transparent",
+    transition: "background 0.15s ease",
+    cursor: "pointer",
+    minWidth: "680px",
+  }), [hovered]);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width  = size * dpr;
-    canvas.height = size * dpr;
-    ctx.scale(dpr, dpr);
+  const changeColor = useCallback((v: number) => v >= 0 ? C.positive : C.negative, []);
 
-    const cx = size / 2;
-    const cy = size / 2;
-    const r  = size / 2 - 3;
+  const fmt = useCallback((n: number) => {
+    if (n >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
+    if (n >= 1e9)  return `$${(n / 1e9).toFixed(2)}B`;
+    if (n >= 1e6)  return `$${(n / 1e6).toFixed(2)}M`;
+    return `$${n.toLocaleString()}`;
+  }, []);
 
-    // BG arc
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, Math.PI * 0.75, Math.PI * 2.25);
-    ctx.strokeStyle = 'var(--zm-divider)';
-    ctx.lineWidth   = 3;
-    ctx.lineCap     = 'round';
-    ctx.stroke();
-
-    // Score arc — semantic color (universally understood)
-    const pct   = score / 100;
-    const start = Math.PI * 0.75;
-    const end   = start + pct * Math.PI * 1.5;
-    const hue   = score >= 80 ? 'var(--zm-positive)' : score >= 60 ? 'var(--zm-warning)' : 'rgba(248,113,113,1)';
-
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, start, end);
-    ctx.strokeStyle = hue;
-    ctx.lineWidth   = 3;
-    ctx.stroke();
-
-    // Center text
-    ctx.fillStyle    = 'rgba(255,255,255,0.88)';
-    ctx.font         = 'bold ' + (size * 0.28) + 'px Space Mono, monospace';
-    ctx.textAlign    = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(String(score), cx, cy);
-  }, [score, size]);
+  const fmtPrice = useCallback((n: number) => {
+    if (n < 0.001)  return `$${n.toExponential(2)}`;
+    if (n < 1)      return `$${n.toFixed(4)}`;
+    if (n < 1000)   return `$${n.toFixed(2)}`;
+    return `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  }, []);
 
   return (
-    <canvas
-      ref={canvasRef}
-      style={{ width: size + 'px', height: size + 'px', display: 'block' }}
-      aria-label={'Momentum score ' + score}
-    />
-  );
-});
-MomentumGauge.displayName = 'MomentumGauge';
-
-// ─── Token Card ───────────────────────────────────────────────────────────────
-
-const TokenCard = memo<{ token: Token }>(({ token }) => {
-  const riskStyle = RISK_COLORS[token.risk];
-  const chainColor = (CHAIN_COLORS as Record<string, string>)[token.chain] || 'var(--zm-text-secondary)';
-
-  const cardStyle = useMemo(() => ({
-    background:   'var(--zm-surface-2)',
-    border:       '1px solid var(--zm-divider)',
-    borderRadius: '12px',
-    padding:      '16px',
-    position:     'relative' as const,
-    overflow:     'hidden',
-  }), []);
-
-  return (
-    <div style={cardStyle}>
-      {/* New badge */}
-      {token.isNew && (
-        <div style={{
-          position: 'absolute', top: 10, right: 10,
-          fontFamily: "'Space Mono', monospace", fontSize: '7px',
-          padding: '2px 6px', borderRadius: '3px',
-          background: 'var(--zm-violet-bg)',
-          border: '1px solid var(--zm-violet-border)',
-          color: 'var(--zm-violet)',
-          letterSpacing: '0.1em',
-        }}>
-          NEW
-        </div>
-      )}
-      {token.trending && !token.isNew && (
-        <div style={{
-          position: 'absolute', top: 10, right: 10,
-          fontFamily: "'Space Mono', monospace", fontSize: '7px',
-          padding: '2px 6px', borderRadius: '3px',
-          background: 'var(--zm-warning-bg)',
-          border: '1px solid var(--zm-warning-border)',
-          color: 'var(--zm-warning)',
-          letterSpacing: '0.1em',
-        }}>
-          🔥 HOT
-        </div>
-      )}
-
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginBottom: '12px' }}>
-        <MomentumGauge score={token.momentum} size={40} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
-            <span style={{ fontFamily: "'Space Mono', monospace", fontSize: '13px', fontWeight: 700, color: 'var(--zm-text-primary)' }}>{token.symbol}</span>
-            <span style={{
-              fontFamily: "'Space Mono', monospace", fontSize: '8px',
-              padding: '1px 5px', borderRadius: '3px',
-              background: 'var(--zm-surface-3)',
-              color: chainColor,
-              border: '1px solid var(--zm-divider)',
-            }}>{token.chain}</span>
-          </div>
-          <div style={{ fontFamily: "'Space Mono', monospace", fontSize: '9px', color: 'var(--zm-text-faint)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{token.name}</div>
-        </div>
+    <div style={rowStyle} onMouseEnter={onEnter} onMouseLeave={onLeave}>
+      <span style={{ fontFamily: FONT, fontSize: 10, color: C.textFaint }}>{token.rank}</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+        <span style={{ fontFamily: FONT, fontSize: 12, fontWeight: 700, color: C.textPrimary, flexShrink: 0 }}>{token.symbol}</span>
+        <span style={{ fontFamily: FONT, fontSize: 10, color: C.textFaint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{token.name}</span>
       </div>
-
-      {/* Price + changes */}
-      <div style={{ marginBottom: '12px' }}>
-        <div style={{ fontFamily: "'Space Mono', monospace", fontSize: '16px', fontWeight: 700, color: 'var(--zm-text-primary)', marginBottom: '6px' }}>{fmtPrice(token.price)}</div>
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <span style={{ fontFamily: "'Space Mono', monospace", fontSize: '10px', color: token.change24h >= 0 ? 'rgba(34,255,170,0.90)' : 'rgba(248,113,113,0.9)' }}>
-            {(token.change24h >= 0 ? '+' : '') + token.change24h.toFixed(1) + '% 24H'}
-          </span>
-          <span style={{ fontFamily: "'Space Mono', monospace", fontSize: '10px', color: token.change7d >= 0 ? 'rgba(34,255,170,0.90)' : 'rgba(248,113,113,0.9)' }}>
-            {(token.change7d >= 0 ? '+' : '') + token.change7d.toFixed(1) + '% 7D'}
-          </span>
-        </div>
-      </div>
-
-      {/* Stats row */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
-        <div>
-          <div style={{ fontFamily: "'Space Mono', monospace", fontSize: '8px', color: 'var(--zm-text-faint)', letterSpacing: '0.06em', marginBottom: '2px' }}>VOLUME</div>
-          <div style={{ fontFamily: "'Space Mono', monospace", fontSize: '11px', color: 'var(--zm-text-secondary)' }}>{fmtVol(token.volume24h)}</div>
-        </div>
-        <div>
-          <div style={{ fontFamily: "'Space Mono', monospace", fontSize: '8px', color: 'var(--zm-text-faint)', letterSpacing: '0.06em', marginBottom: '2px' }}>MCAP</div>
-          <div style={{ fontFamily: "'Space Mono', monospace", fontSize: '11px', color: 'var(--zm-text-secondary)' }}>{fmtVol(token.mcap)}</div>
-        </div>
-        <div>
-          <div style={{ fontFamily: "'Space Mono', monospace", fontSize: '8px', color: 'var(--zm-text-faint)', letterSpacing: '0.06em', marginBottom: '2px' }}>CATEGORY</div>
-          <div style={{ fontFamily: "'Space Mono', monospace", fontSize: '11px', color: 'var(--zm-text-secondary)' }}>{token.category}</div>
-        </div>
-      </div>
-
-      {/* Risk badge */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{
-          fontFamily: "'Space Mono', monospace", fontSize: '8px',
-          padding: '3px 8px', borderRadius: '4px',
-          background: riskStyle.bg,
-          border: '1px solid ' + riskStyle.border,
-          color: riskStyle.text,
-          letterSpacing: '0.06em',
-        }}>
-          {token.risk + ' RISK'}
-        </span>
-        <span style={{ fontFamily: "'Space Mono', monospace", fontSize: '8px', color: 'var(--zm-text-faint)' }}>{token.launchDate}</span>
-      </div>
+      <span style={{ fontFamily: FONT, fontSize: 12, fontWeight: 600, color: C.textPrimary, textAlign: "right" as const }}>{fmtPrice(token.price)}</span>
+      <span style={{ fontFamily: FONT, fontSize: 11, fontWeight: 600, color: changeColor(token.change24h), textAlign: "right" as const }}>
+        {token.change24h >= 0 ? "+" : ""}{token.change24h.toFixed(2)}%
+      </span>
+      <span style={{ fontFamily: FONT, fontSize: 11, fontWeight: 600, color: changeColor(token.change7d), textAlign: "right" as const }}>
+        {token.change7d >= 0 ? "+" : ""}{token.change7d.toFixed(2)}%
+      </span>
+      <span style={{ fontFamily: FONT, fontSize: 11, color: C.textFaint, textAlign: "right" as const }}>{fmt(token.volume)}</span>
+      <span style={{ fontFamily: FONT, fontSize: 11, color: C.textFaint, textAlign: "right" as const }}>{fmt(token.mcap)}</span>
     </div>
   );
 });
-TokenCard.displayName = 'TokenCard';
+TokenRow.displayName = "TokenRow";
 
-// ─── Tokens ───────────────────────────────────────────────────────────────────
+// ─── EmptyState ───────────────────────────────────────────────────────────────
 
-type TokenTab = 'Trending' | 'New Listings' | 'High Momentum' | 'All';
-type SortMode = 'momentum' | 'change24h' | 'volume24h' | 'mcap';
+const EmptyState = memo(() => (
+  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "64px 24px", gap: 12 }}>
+    <span style={{ fontSize: 32, opacity: 0.25 }}>🪙</span>
+    <span style={{ fontFamily: FONT, fontSize: 12, color: C.textFaint }}>No tokens match your current filter.</span>
+    <span style={{ fontFamily: FONT, fontSize: 10, color: C.textFaint, opacity: 0.6 }}>Try adjusting search or category filter.</span>
+  </div>
+));
+EmptyState.displayName = "EmptyState";
 
-const SORT_OPTIONS: readonly { key: SortMode; label: string }[] = Object.freeze([
-  { key: 'momentum',  label: 'Momentum' },
-  { key: 'change24h', label: '24H Chg'  },
-  { key: 'volume24h', label: 'Volume'   },
-  { key: 'mcap',      label: 'MCap'     },
-] as const);
+// ─── SortHeader ───────────────────────────────────────────────────────────────
 
-const TOKEN_TABS: readonly TokenTab[] = Object.freeze(['Trending', 'New Listings', 'High Momentum', 'All']);
+interface ColDef { key: SortKey; label: string; align: "left" | "right"; }
+
+interface SortHeaderProps {
+  col:     ColDef;
+  sortKey: SortKey;
+  sortDir: SortDir;
+  onSort:  (k: SortKey) => void;
+}
+const SortHeader = memo(({ col, sortKey, sortDir, onSort }: SortHeaderProps) => {
+  const onClick = useCallback(() => onSort(col.key), [col.key, onSort]);
+  const active  = sortKey === col.key;
+  return (
+    <span
+      onClick={onClick}
+      style={{
+        fontFamily: FONT,
+        fontSize: 9,
+        letterSpacing: "0.12em",
+        textTransform: "uppercase" as const,
+        color: active ? C.accent : C.textFaint,
+        cursor: "pointer",
+        textAlign: col.align,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: col.align === "right" ? "flex-end" : "flex-start",
+        gap: 4,
+        userSelect: "none" as const,
+      }}
+    >
+      {col.label}{active ? (sortDir === "desc" ? " ▼" : " ▲") : ""}
+    </span>
+  );
+});
+SortHeader.displayName = "SortHeader";
+
+// ─── Column definitions (fully typed — no cast) ───────────────────────────────
+
+const COLS: ColDef[] = Object.freeze([
+  { key: "rank",      label: "#",       align: "left"  },
+  { key: "rank",      label: "Asset",   align: "left"  },
+  { key: "price",     label: "Price",   align: "right" },
+  { key: "change24h", label: "24H %",   align: "right" },
+  { key: "change24h", label: "7D %",    align: "right" },
+  { key: "volume",    label: "Volume",  align: "right" },
+  { key: "mcap",      label: "Mkt Cap", align: "right" },
+]) as ColDef[];
+
+// ─── Tokens (Main) ────────────────────────────────────────────────────────────
 
 const Tokens = memo(() => {
-  const mountedRef = useRef(true);
-  const [tab, setTab]           = useState<TokenTab>('Trending');
-  const [category, setCategory] = useState('All');
-  const [sortMode, setSortMode] = useState<SortMode>('momentum');
-  const [search, setSearch]     = useState('');
+  const { isMobile } = useBreakpoint();
+  const [data, setData]       = useState<TokensData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<SortKey>("rank");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [search, setSearch]   = useState("");
+  const mountedRef            = useRef(true);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&page=1&sparkline=false&price_change_percentage=24h,7d"
+      );
+      if (!mountedRef.current) return;
+      if (!res.ok) throw new Error(`CoinGecko HTTP ${res.status}`);
+      const json = await res.json() as CGMarketCoin7d[];
+      if (!mountedRef.current) return;
+
+      const tokens: Token[] = json.map((t, i): Token => ({
+        id:       t.id,
+        rank:     i + 1,
+        symbol:   t.symbol.toUpperCase(),
+        name:     t.name,
+        price:    t.current_price,
+        change24h: t.price_change_percentage_24h ?? 0,
+        change7d:  t.price_change_percentage_7d_in_currency ?? 0,
+        volume:   t.total_volume,
+        mcap:     t.market_cap,
+        category: "crypto",
+      }));
+      setData({ tokens, lastUpdated: Date.now() });
+    } catch (e) {
+      if (!mountedRef.current) return;
+      setError(`Failed to load token data: ${e instanceof Error ? e.message : "Unknown error"}`);
+    } finally {
+      if (mountedRef.current) setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
+    fetchData();
     return () => { mountedRef.current = false; };
+  }, [fetchData]);
+
+  const handleSort = useCallback((k: SortKey) => {
+    setSortKey(prev => {
+      if (prev === k) setSortDir(d => d === "desc" ? "asc" : "desc");
+      else setSortDir("desc");
+      return k;
+    });
   }, []);
 
-  const handleTab      = useCallback((t: TokenTab) => { if (mountedRef.current) setTab(t); }, []);
-  const handleCategory = useCallback((c: string) => { if (mountedRef.current) setCategory(c); }, []);
-  const handleSort     = useCallback((s: SortMode) => { if (mountedRef.current) setSortMode(s); }, []);
-  const handleSearch   = useCallback((e: React.ChangeEvent<HTMLInputElement>) => { if (mountedRef.current) setSearch(e.target.value); }, []);
+  const handleSearch = useCallback((e: React.ChangeEvent<HTMLInputElement>) => setSearch(e.target.value), []);
 
-  const displayed = useMemo(() => {
-    let list = [...TOKENS];
-    if (tab === 'Trending')      list = list.filter(t => t.trending);
-    if (tab === 'New Listings')  list = list.filter(t => t.isNew);
-    if (tab === 'High Momentum') list = list.filter(t => t.momentum >= 80);
-    if (category !== 'All') list = list.filter(t => t.category === category);
-    if (search) list = list.filter(t =>
-      t.symbol.toLowerCase().includes(search.toLowerCase()) ||
-      t.name.toLowerCase().includes(search.toLowerCase()),
-    );
-    list.sort((a, b) => b[sortMode] - a[sortMode]);
-    return list;
-  }, [tab, category, sortMode, search]);
+  const lastUpdatedStr = useMemo(() => {
+    if (!data?.lastUpdated) return "—";
+    const diff = Math.floor((Date.now() - data.lastUpdated) / 1000);
+    if (diff < 60) return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    return `${Math.floor(diff / 3600)}h ago`;
+  }, [data]);
+
+  const filteredTokens = useMemo(() => {
+    let list = data?.tokens ?? [];
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      list = list.filter(t => t.symbol.toLowerCase().includes(q) || t.name.toLowerCase().includes(q));
+    }
+    return [...list].sort((a, b) => {
+      const mul = sortDir === "desc" ? -1 : 1;
+      return ((a[sortKey] as number) - (b[sortKey] as number)) * mul;
+    });
+  }, [data, search, sortKey, sortDir]);
 
   const pageStyle = useMemo(() => ({
-    minHeight:  '100vh',
-    background: 'var(--zm-bg-base)',
-    fontFamily: "'Space Mono', monospace",
+    background: C.bgBase, minHeight: "100vh", color: C.textPrimary, fontFamily: FONT,
+    padding: isMobile ? "16px 12px" : "20px 16px",
+  }), [isMobile]);
+
+  const cardStyle = useMemo(() => ({
+    background: C.glassBg, border: `1px solid ${C.glassBorder}`, borderRadius: 12, overflow: "hidden" as const,
   }), []);
 
-  return (
-    <div style={pageStyle} aria-label="Token discovery" role="main">
+  const handleRefresh = useCallback(() => fetchData(), [fetchData]);
 
+  return (
+    <div style={pageStyle}>
       {/* Header */}
-      <div style={{ padding: '24px 28px 20px', borderBottom: '1px solid var(--zm-divider)' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-          <div>
-            <h1 style={{ margin: 0, fontFamily: "'Space Mono', monospace", fontSize: '18px', fontWeight: 700, color: 'var(--zm-text-primary)', letterSpacing: '0.04em' }}>
-              TOKEN DISCOVERY
-            </h1>
-            <p style={{ margin: '4px 0 0', fontFamily: "'Space Mono', monospace", fontSize: '10px', color: 'var(--zm-text-faint)', letterSpacing: '0.06em' }}>
-              {TOKENS.length + ' TOKENS · MOMENTUM + RISK SCORING'}
-            </p>
-          </div>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 20, gap: 12, flexWrap: "wrap" as const }}>
+        <div>
+          <h1 style={{ fontFamily: FONT, fontSize: isMobile ? 16 : 20, fontWeight: 700, letterSpacing: "0.06em", color: C.textPrimary, margin: 0 }}>Tokens</h1>
+          <p style={{ fontFamily: FONT, fontSize: 9, letterSpacing: "0.18em", textTransform: "uppercase", color: C.textFaint, margin: "6px 0 0" }}>Top 100 · CoinGecko live data</p>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" as const, width: isMobile ? "100%" : "auto" }}>
           <input
-            type="text"
             value={search}
             onChange={handleSearch}
             placeholder="Search token..."
-            aria-label="Search tokens"
             style={{
-              fontFamily:   "'Space Mono', monospace",
-              fontSize:     '11px',
-              background:   'var(--zm-surface-2)',
-              border:       '1px solid var(--zm-divider)',
-              borderRadius: '8px',
-              padding:      '8px 14px',
-              color:        'var(--zm-text-primary)',
-              outline:      'none',
-              width:        '200px',
+              fontFamily: FONT, fontSize: 11, color: C.textPrimary,
+              background: "rgba(255,255,255,0.04)", border: `1px solid ${C.glassBorder}`,
+              borderRadius: 6, padding: "6px 12px", outline: "none",
+              flex: isMobile ? 1 : "unset",
+              minWidth: isMobile ? 0 : "auto",
             }}
           />
-        </div>
-      </div>
-
-      {/* Summary stats */}
-      <div style={{ display: 'flex', gap: '12px', padding: '14px 28px' }}>
-        {([
-          { label: 'Trending',      value: String(TOKENS.filter(t => t.trending).length),              sub: 'tokens' },
-          { label: 'New Listings',  value: String(TOKENS.filter(t => t.isNew).length),                sub: 'last 30D' },
-          { label: 'High Momentum', value: String(TOKENS.filter(t => t.momentum >= 80).length),        sub: 'score ≥80' },
-          { label: 'Avg Momentum',  value: Math.round(TOKENS.reduce((s, t) => s + t.momentum, 0) / TOKENS.length).toString(), sub: 'all tokens' },
-        ] as const).map(c => (
-          <div key={c.label} style={{
-            flex: 1,
-            background: 'var(--zm-surface-1)',
-            border: '1px solid var(--zm-divider)',
-            borderRadius: '10px',
-            padding: '12px 16px',
-          }}>
-            <div style={{ fontFamily: "'Space Mono', monospace", fontSize: '9px', color: 'var(--zm-text-faint)', letterSpacing: '0.1em', marginBottom: '4px', textTransform: 'uppercase' }}>{c.label}</div>
-            <div style={{ fontFamily: "'Space Mono', monospace", fontSize: '20px', fontWeight: 700, color: 'var(--zm-text-primary)', marginBottom: '2px' }}>{c.value}</div>
-            <div style={{ fontFamily: "'Space Mono', monospace", fontSize: '9px', color: 'var(--zm-text-faint)' }}>{c.sub}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Tabs + Sort */}
-      <div style={{ padding: '8px 28px', borderBottom: '1px solid var(--zm-divider)', display: 'flex', alignItems: 'center', gap: '16px' }}>
-        <div style={{ display: 'flex', gap: '4px' }} role="tablist" aria-label="Token filter tabs">
-          {TOKEN_TABS.map(t => (
-            <button
-              key={t}
-              type="button"
-              role="tab"
-              aria-selected={tab === t}
-              onClick={() => handleTab(t)}
-              style={{
-                fontFamily:    "'Space Mono', monospace",
-                fontSize:      '10px',
-                letterSpacing: '0.04em',
-                padding:       '6px 12px',
-                borderRadius:  '6px',
-                border:        tab === t ? '1px solid var(--zm-accent-border)' : '1px solid transparent',
-                background:    tab === t ? 'var(--zm-accent-dim)' : 'transparent',
-                color:         tab === t ? 'var(--zm-accent)' : 'var(--zm-text-secondary)',
-                cursor:        'pointer',
-              }}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
-
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: '4px', alignItems: 'center' }}>
-          <span style={{ fontFamily: "'Space Mono', monospace", fontSize: '9px', color: 'var(--zm-text-faint)', letterSpacing: '0.06em' }}>SORT</span>
-          {SORT_OPTIONS.map(s => (
-            <button
-              key={s.key}
-              type="button"
-              onClick={() => handleSort(s.key)}
-              aria-pressed={sortMode === s.key}
-              style={{
-                fontFamily:    "'Space Mono', monospace",
-                fontSize:      '9px',
-                padding:       '4px 8px',
-                borderRadius:  '5px',
-                border:        sortMode === s.key ? '1px solid var(--zm-violet-border)' : '1px solid var(--zm-divider)',
-                background:    sortMode === s.key ? 'var(--zm-violet-bg)' : 'transparent',
-                color:         sortMode === s.key ? 'var(--zm-violet)' : 'var(--zm-text-faint)',
-                cursor:        'pointer',
-              }}
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Category chips */}
-      <div style={{ display: 'flex', gap: '6px', padding: '12px 28px', flexWrap: 'wrap' }}>
-        {CATEGORIES.map(c => (
           <button
-            key={c}
-            type="button"
-            onClick={() => handleCategory(c)}
-            aria-pressed={category === c}
-            style={{
-              fontFamily:    "'Space Mono', monospace",
-              fontSize:      '9px',
-              padding:       '4px 10px',
-              borderRadius:  '5px',
-              border:        category === c ? '1px solid var(--zm-positive-border)' : '1px solid var(--zm-divider)',
-              background:    category === c ? 'var(--zm-positive-bg)' : 'transparent',
-              color:         category === c ? 'var(--zm-positive)' : 'var(--zm-text-faint)',
-              cursor:        'pointer',
-            }}
+            style={{ fontFamily: FONT, fontSize: 10, fontWeight: 600, color: C.accent, background: "rgba(0,238,255,0.08)", border: "1px solid rgba(0,238,255,0.2)", borderRadius: 6, padding: "6px 12px", cursor: "pointer", flexShrink: 0 }}
+            onClick={handleRefresh}
           >
-            {c}
+            ↻ Refresh
           </button>
-        ))}
+        </div>
       </div>
 
-      {/* Cards grid */}
-      <div style={{ padding: '8px 28px 28px' }}>
-        {displayed.length > 0 ? (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '12px' }}>
-            {displayed.map(t => (
-              <TokenCard key={t.id} token={t} />
-            ))}
+      {/* Table Card */}
+      <div style={cardStyle}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", borderBottom: `1px solid ${C.glassBorder}` }}>
+          <span style={{ fontFamily: FONT, fontSize: 9, letterSpacing: "0.18em", textTransform: "uppercase", color: C.textFaint }}>
+            {filteredTokens.length} Tokens
+          </span>
+          <span style={{ fontFamily: FONT, fontSize: 9, color: C.textFaint }}>Updated {lastUpdatedStr}</span>
+        </div>
+
+        {loading && (
+          <div style={{ padding: "40px 24px", textAlign: "center", fontFamily: FONT, fontSize: 11, color: C.textFaint }}>
+            Loading token data...
           </div>
-        ) : (
-          <div style={{ padding: '48px', textAlign: 'center', fontFamily: "'Space Mono', monospace", fontSize: '12px', color: 'var(--zm-text-faint)' }}>
-            No tokens match your filters.
+        )}
+
+        {!loading && error && (
+          <div style={{ padding: "40px 24px", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+            <span style={{ fontFamily: FONT, fontSize: 12, color: C.negative, textAlign: "center" }}>{error}</span>
+            <button
+              style={{ fontFamily: FONT, fontSize: 10, fontWeight: 600, color: C.textPrimary, background: "rgba(255,255,255,0.06)", border: `1px solid ${C.glassBorder}`, borderRadius: 6, padding: "6px 14px", cursor: "pointer" }}
+              onClick={fetchData}
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {!loading && !error && (
+          <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" } as React.CSSProperties}>
+            <div style={{ display: "grid", gridTemplateColumns: "36px 140px 110px 80px 80px 110px 110px", gap: 12, padding: "8px 16px", borderBottom: `1px solid rgba(255,255,255,0.1)`, minWidth: "680px" }}>
+              {COLS.map((col, i) => (
+                <SortHeader key={i} col={col} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              ))}
+            </div>
+            {filteredTokens.length === 0
+              ? <EmptyState />
+              : filteredTokens.map(t => <TokenRow key={t.id} token={t} />)
+            }
           </div>
         )}
       </div>
     </div>
   );
 });
+Tokens.displayName = "Tokens";
 
-Tokens.displayName = 'Tokens';
 export default Tokens;

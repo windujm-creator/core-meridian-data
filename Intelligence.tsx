@@ -1,497 +1,338 @@
 /**
- * Intelligence.tsx — ZERØ MERIDIAN 2026 Phase 10
- * AI Intelligence Hub:
- *   - TensorFlow.js AI Signal (anomaly, prediction, RSI, MACD, Bollinger)
- *   - Messari Fundamental Data (free tier)
- *   - Santiment Social Volume + Trending Topics (free tier)
- * - React.memo + displayName ✓
- * - rgba() only ✓
- * - Zero template literals in JSX ✓
- * - Object.freeze() all static data ✓
- * - useCallback + useMemo ✓
- * - mountedRef ✓
- * - aria-label + role ✓
- * - will-change: transform ✓
- * - var(--zm-*) theme-aware ✓ ← push25
+ * Intelligence.tsx — ZERØ MERIDIAN push130
+ * push130: Zero :any — CCNewsItem + CPNewsItem + CPCurrency interfaces
+ * push110: Responsive polish — mobile 320px + desktop 1440px
+ * - useBreakpoint ✓  React.memo + displayName ✓
+ * - rgba() only ✓  Zero className ✓  Zero hex color ✓  Zero :any ✓
  */
 
-import { memo, useCallback, useMemo, useRef, useEffect, useState, Suspense, lazy } from 'react';
-import { motion } from 'framer-motion';
-// GlassCard removed - using card-bg direct (push47)
-import Skeleton from '@/components/shared/Skeleton';
-import { useMessari }   from '@/hooks/useMessari';
-import { useSantiment } from '@/hooks/useSantiment';
-import { useCrypto }    from '@/contexts/CryptoContext';
-import { formatCompact, formatChange, formatPrice } from '@/lib/formatters';
-import { useBreakpoint } from '@/hooks/useBreakpoint';
+import React, { memo, useCallback, useMemo, useEffect, useRef, useState } from "react";
+import { useBreakpoint } from "@/hooks/useBreakpoint";
 
-const AISignalTile = lazy(() => import('@/components/tiles/AISignalTile'));
+// ─── Constants ────────────────────────────────────────────────────────────────
 
-// ─── Static data ──────────────────────────────────────────────────────────────
+const FONT = "'JetBrains Mono', monospace";
 
-const SYMBOLS = Object.freeze(['BTC', 'ETH', 'SOL'] as const);
-type Symbol = typeof SYMBOLS[number];
-
-const SLUG_MAP = Object.freeze({
-  BTC: 'bitcoin',
-  ETH: 'ethereum',
-  SOL: 'solana',
-} as const);
-
-const containerVariants = Object.freeze({
-  hidden:  { opacity: 0 },
-  visible: { opacity: 1, transition: { staggerChildren: 0.07, delayChildren: 0.05 } },
+const C = Object.freeze({
+  accent:      "rgba(0,238,255,1)",
+  positive:    "rgba(34,255,170,1)",
+  negative:    "rgba(255,68,136,1)",
+  warning:     "rgba(255,187,0,1)",
+  textPrimary: "rgba(240,240,248,1)",
+  textFaint:   "rgba(80,80,100,1)",
+  bgBase:      "rgba(5,7,13,1)",
+  cardBg:      "rgba(14,17,28,1)",
+  glassBg:     "rgba(255,255,255,0.04)",
+  glassBorder: "rgba(255,255,255,0.06)",
 });
 
-const itemVariants = Object.freeze({
-  hidden:  { opacity: 0, y: 12 },
-  visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.22, 1, 0.36, 1] } },
-});
+const CATEGORIES = Object.freeze(["All","Bitcoin","Ethereum","DeFi","Regulation","Macro"] as const);
+type CategoryType = typeof CATEGORIES[number];
 
-// ─── Sub components ───────────────────────────────────────────────────────────
+// ─── Raw API types ─────────────────────────────────────────────────────────────
 
-const SectionHeader = memo(({ label, color = 'var(--zm-violet)' }: { label: string; color?: string }) => (
-  <p style={{
-    fontFamily: "'Space Mono', monospace",
-    fontSize: '10px',
-    letterSpacing: '0.16em',
-    color,
-    marginBottom: '14px',
-    textTransform: 'uppercase' as const,
-    opacity: 0.6,
-  }}>
-    {label}
-  </p>
-));
-SectionHeader.displayName = 'SectionHeader';
+interface CCSourceInfo { name?: string; }
+interface CCNewsItem {
+  id?:          number | string;
+  title?:       string;
+  url?:         string;
+  source?:      string;
+  source_info?: CCSourceInfo;
+  published_on?: number;
+  categories?:  string;
+}
+interface CCResponse { Data?: CCNewsItem[]; }
 
-interface MessariCardProps {
-  asset: string;
-  data: {
-    symbol: string;
-    percentChangeLast24h: number;
-    percentChangeLast7d:  number;
-    percentChangeLast30d: number;
-    realVolumeLast24h:    number;
-    athUsd:               number;
-    circulatingSupply:    number;
-  } | undefined;
-  isLoading: boolean;
+interface CPCurrency { code?: string; }
+interface CPVotes    { positive?: number; negative?: number; }
+interface CPSource   { title?: string; }
+interface CPNewsItem {
+  id?:           number | string;
+  title?:        string;
+  url?:          string;
+  source?:       CPSource;
+  published_at?: string;
+  votes?:        CPVotes;
+  currencies?:   CPCurrency[];
+}
+interface CPResponse { results?: CPNewsItem[]; }
+
+// ─── App types ────────────────────────────────────────────────────────────────
+
+interface NewsItem {
+  id:          string;
+  title:       string;
+  source:      string;
+  url:         string;
+  publishedAt: number;
+  sentiment:   "positive" | "negative" | "neutral";
+  votes:       { positive: number; negative: number; };
+  currencies:  string[];
 }
 
-const MessariCard = memo(({ asset, data, isLoading }: MessariCardProps) => {
-  const cardStyle = useMemo(() => ({
-    padding: '14px',
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: '10px',
-  }), []);
+interface IntelligenceData {
+  news:        NewsItem[];
+  lastUpdated: number;
+}
 
-  if (isLoading || !data) {
-    return (
-      <div style={{ ...cardStyle, background: "var(--zm-card-bg)", border: "1px solid var(--zm-card-border)", borderRadius: "var(--zm-card-radius)" }}>
-        <Skeleton.Card />
-      </div>
-    );
-  }
+// ─── SentimentBadge ───────────────────────────────────────────────────────────
+
+interface SentimentBadgeProps { sentiment: NewsItem["sentiment"]; }
+const SentimentBadge = memo(({ sentiment }: SentimentBadgeProps) => {
+  const color = useMemo(() => ({
+    positive: C.positive,
+    negative: C.negative,
+    neutral:  C.textFaint,
+  })[sentiment], [sentiment]);
+  return (
+    <span style={{
+      fontFamily: FONT, fontSize: 9, fontWeight: 700, letterSpacing: "0.08em",
+      color, background: `${color}18`, borderRadius: 4,
+      padding: "2px 6px", display: "inline-block", flexShrink: 0,
+    }}>
+      {sentiment.toUpperCase()}
+    </span>
+  );
+});
+SentimentBadge.displayName = "SentimentBadge";
+
+// ─── NewsCard ─────────────────────────────────────────────────────────────────
+
+interface NewsCardProps { item: NewsItem; isMobile: boolean; }
+const NewsCard = memo(({ item, isMobile }: NewsCardProps) => {
+  const [hovered, setHovered] = useState(false);
+  const onEnter = useCallback(() => setHovered(true),  []);
+  const onLeave = useCallback(() => setHovered(false), []);
+
+  const ts = useMemo(() => {
+    const diff = Math.floor((Date.now() - item.publishedAt) / 1000);
+    if (diff < 60) return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return `${Math.floor(diff / 86400)}d ago`;
+  }, [item.publishedAt]);
+
+  const cardStyle = useMemo(() => ({
+    background: hovered ? "rgba(255,255,255,0.04)" : C.glassBg,
+    border: `1px solid ${hovered ? "rgba(0,238,255,0.15)" : C.glassBorder}`,
+    borderRadius: 12,
+    padding: isMobile ? 12 : 16,
+    display: "flex" as const,
+    flexDirection: "column" as const,
+    gap: 10,
+    transition: "background 0.15s ease, border-color 0.15s ease",
+    cursor: "pointer",
+  }), [hovered, isMobile]);
+
+  const handleClick = useCallback(() => window.open(item.url, "_blank"), [item.url]);
 
   return (
-    <div style={{ ...cardStyle, background: "var(--zm-card-bg)", border: "1px solid var(--zm-card-border)", borderRadius: "var(--zm-card-radius)" }} aria-label={'Messari fundamental data for ' + asset}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{
-          fontFamily: "'Space Mono', monospace",
-          fontSize: '12px',
-          fontWeight: 700,
-          color: 'var(--zm-text-primary)',
-          letterSpacing: '0.06em',
-        }}>
-          {asset.toUpperCase()}
+    <div style={cardStyle} onMouseEnter={onEnter} onMouseLeave={onLeave} onClick={handleClick}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+        <span style={{ fontFamily: FONT, fontSize: isMobile ? 11 : 12, fontWeight: 600, color: C.textPrimary, lineHeight: "1.5", flex: 1 }}>
+          {item.title}
         </span>
-        <span style={{
-          fontFamily: "'Space Mono', monospace",
-          fontSize: '8px',
-          color: 'var(--zm-accent)',
-          letterSpacing: '0.1em',
-          opacity: 0.6,
-        }}>MESSARI</span>
+        <SentimentBadge sentiment={item.sentiment} />
+      </div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" as const, gap: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" as const }}>
+          <span style={{ fontFamily: FONT, fontSize: 9, color: C.accent, opacity: 0.8 }}>{item.source}</span>
+          {item.currencies.slice(0, isMobile ? 2 : 3).map(c => (
+            <span key={c} style={{ fontFamily: FONT, fontSize: 9, color: C.textFaint, background: "rgba(255,255,255,0.05)", borderRadius: 4, padding: "1px 5px" }}>{c}</span>
+          ))}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontFamily: FONT, fontSize: 9, color: C.positive }}>▲ {item.votes.positive}</span>
+          <span style={{ fontFamily: FONT, fontSize: 9, color: C.negative }}>▼ {item.votes.negative}</span>
+          <span style={{ fontFamily: FONT, fontSize: 9, color: C.textFaint }}>{ts}</span>
+        </div>
+      </div>
+    </div>
+  );
+});
+NewsCard.displayName = "NewsCard";
+
+// ─── EmptyState ───────────────────────────────────────────────────────────────
+
+interface EmptyStateProps { category: CategoryType; onRetry: () => void; }
+const EmptyState = memo(({ category, onRetry }: EmptyStateProps) => (
+  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "64px 24px", gap: 12 }}>
+    <span style={{ fontSize: 32, opacity: 0.25 }}>📰</span>
+    <span style={{ fontFamily: FONT, fontSize: 12, color: C.textFaint, textAlign: "center" }}>
+      {category === "All" ? "No intelligence feeds available." : `No ${category} news found.`}
+    </span>
+    <span style={{ fontFamily: FONT, fontSize: 10, color: C.textFaint, opacity: 0.6 }}>
+      Try refreshing or selecting a different category.
+    </span>
+    <button
+      onClick={onRetry}
+      style={{ fontFamily: FONT, fontSize: 10, fontWeight: 600, color: C.accent, background: "rgba(0,238,255,0.08)", border: "1px solid rgba(0,238,255,0.2)", borderRadius: 6, padding: "5px 12px", cursor: "pointer" }}
+    >
+      Retry
+    </button>
+  </div>
+));
+EmptyState.displayName = "EmptyState";
+
+// ─── Intelligence (Main) ──────────────────────────────────────────────────────
+
+const Intelligence = memo(() => {
+  const { isMobile } = useBreakpoint();
+  const [category, setCategory] = useState<CategoryType>("All");
+  const [data, setData]         = useState<IntelligenceData | null>(null);
+  const [loading, setLoading]   = useState(true);
+  const [error, setError]       = useState<string | null>(null);
+  const mountedRef              = useRef(true);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("https://cryptopanic.com/api/free/v1/posts/?auth_token=free&public=true");
+      if (!mountedRef.current) return;
+
+      if (!res.ok) {
+        // Fallback: CryptoCompare
+        const fallback = await fetch("https://min-api.cryptocompare.com/data/v2/news/?lang=EN");
+        if (!mountedRef.current) return;
+        if (!fallback.ok) throw new Error("All news sources unavailable");
+        const json = await fallback.json() as CCResponse;
+        if (!mountedRef.current) return;
+
+        const items: NewsItem[] = (json.Data ?? []).slice(0, 30).map((n): NewsItem => ({
+          id:          String(n.id ?? ""),
+          title:       n.title ?? "",
+          source:      n.source_info?.name ?? n.source ?? "Unknown",
+          url:         n.url ?? "",
+          publishedAt: (n.published_on ?? 0) * 1000,
+          sentiment:   "neutral",
+          votes:       { positive: 0, negative: 0 },
+          currencies:  (n.categories ?? "").split("|").filter(Boolean),
+        }));
+        setData({ news: items, lastUpdated: Date.now() });
+        return;
+      }
+
+      // Primary: CryptoPanic
+      const json = await res.json() as CPResponse;
+      if (!mountedRef.current) return;
+
+      const items: NewsItem[] = (json.results ?? []).slice(0, 30).map((n): NewsItem => {
+        const pos = n.votes?.positive ?? 0;
+        const neg = n.votes?.negative ?? 0;
+        return {
+          id:          String(n.id ?? ""),
+          title:       n.title ?? "",
+          source:      n.source?.title ?? "Unknown",
+          url:         n.url ?? "",
+          publishedAt: new Date(n.published_at ?? "").getTime(),
+          sentiment:   neg > pos ? "negative" : pos > 5 ? "positive" : "neutral",
+          votes:       { positive: pos, negative: neg },
+          currencies:  (n.currencies ?? []).map(c => c.code ?? "").filter(Boolean).slice(0, 3),
+        };
+      });
+      setData({ news: items, lastUpdated: Date.now() });
+
+    } catch (e) {
+      if (!mountedRef.current) return;
+      setError(`Failed to load intelligence data: ${e instanceof Error ? e.message : "Unknown error"}`);
+    } finally {
+      if (mountedRef.current) setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    fetchData();
+    return () => { mountedRef.current = false; };
+  }, [fetchData]);
+
+  const lastUpdatedStr = useMemo(() => {
+    if (!data?.lastUpdated) return "—";
+    const diff = Math.floor((Date.now() - data.lastUpdated) / 1000);
+    if (diff < 60) return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    return `${Math.floor(diff / 3600)}h ago`;
+  }, [data]);
+
+  const filteredNews = useMemo(() => {
+    if (!data?.news) return [];
+    if (category === "All") return data.news;
+    const q = category.toLowerCase();
+    return data.news.filter(n =>
+      n.title.toLowerCase().includes(q) ||
+      n.currencies.some(c => c.toLowerCase().includes(q))
+    );
+  }, [data, category]);
+
+  const makeCatStyle = useCallback((c: CategoryType) => ({
+    fontFamily: FONT, fontSize: 10, fontWeight: 600, letterSpacing: "0.08em",
+    color: c === category ? C.bgBase : C.textFaint,
+    background: c === category ? C.accent : "transparent",
+    border: `1px solid ${c === category ? C.accent : C.glassBorder}`,
+    borderRadius: 6, padding: "4px 10px", cursor: "pointer",
+  }), [category]);
+
+  const pageStyle = useMemo(() => ({
+    background: C.bgBase, minHeight: "100vh", color: C.textPrimary, fontFamily: FONT,
+    padding: isMobile ? "16px 12px" : "20px 16px",
+  }), [isMobile]);
+
+  const handleRefresh = useCallback(() => fetchData(), [fetchData]);
+
+  return (
+    <div style={pageStyle}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 20, gap: 12 }}>
+        <div>
+          <h1 style={{ fontFamily: FONT, fontSize: isMobile ? 16 : 20, fontWeight: 700, letterSpacing: "0.06em", color: C.textPrimary, margin: 0 }}>Intelligence</h1>
+          <p style={{ fontFamily: FONT, fontSize: 9, letterSpacing: "0.18em", textTransform: "uppercase", color: C.textFaint, margin: "6px 0 0" }}>
+            News · Sentiment · Updated {lastUpdatedStr}
+          </p>
+        </div>
+        <button
+          style={{ fontFamily: FONT, fontSize: 10, fontWeight: 600, color: C.accent, background: "rgba(0,238,255,0.08)", border: "1px solid rgba(0,238,255,0.2)", borderRadius: 6, padding: "6px 12px", cursor: "pointer", flexShrink: 0 }}
+          onClick={handleRefresh}
+        >
+          ↻ Refresh
+        </button>
       </div>
 
-      {/* Change grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px' }}>
-        {[
-          { label: '24H', value: data.percentChangeLast24h },
-          { label: '7D',  value: data.percentChangeLast7d },
-          { label: '30D', value: data.percentChangeLast30d },
-        ].map(row => (
-          <div key={row.label} style={{
-            background: 'var(--zm-surface-1)',
-            borderRadius: '6px',
-            padding: '6px 8px',
-            textAlign: 'center' as const,
-          }}>
-            <div style={{
-              fontFamily: "'Space Mono', monospace",
-              fontSize: '8px',
-              color: 'var(--zm-text-faint)',
-              letterSpacing: '0.08em',
-              marginBottom: '2px',
-            }}>{row.label}</div>
-            <div style={{
-              fontFamily: "'Space Mono', monospace",
-              fontSize: '11px',
-              fontWeight: 700,
-              color: row.value >= 0 ? 'var(--zm-positive)' : 'var(--zm-negative)',
-            }}>
-              {formatChange(row.value)}
-            </div>
-          </div>
+      {/* Category filters */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" as const }}>
+        {CATEGORIES.map(c => (
+          <button key={c} style={makeCatStyle(c)} onClick={() => setCategory(c)}>{c}</button>
         ))}
       </div>
 
-      {/* Metrics */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span style={{ fontFamily: "'Space Mono', monospace", fontSize: '9px', color: 'var(--zm-text-faint)' }}>Real Vol 24H</span>
-          <span style={{ fontFamily: "'Space Mono', monospace", fontSize: '9px', color: 'var(--zm-text-primary)', opacity: 0.7 }}>{formatCompact(data.realVolumeLast24h)}</span>
+      {loading && (
+        <div style={{ padding: "80px 24px", textAlign: "center", fontFamily: FONT, fontSize: 11, color: C.textFaint }}>
+          Loading intelligence feeds...
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span style={{ fontFamily: "'Space Mono', monospace", fontSize: '9px', color: 'var(--zm-text-faint)' }}>ATH</span>
-          <span style={{ fontFamily: "'Space Mono', monospace", fontSize: '9px', color: 'var(--zm-text-primary)', opacity: 0.7 }}>{formatPrice(data.athUsd)}</span>
+      )}
+
+      {!loading && error && (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, padding: "64px 24px" }}>
+          <span style={{ fontFamily: FONT, fontSize: 12, color: C.negative, textAlign: "center" }}>{error}</span>
+          <button
+            style={{ fontFamily: FONT, fontSize: 10, fontWeight: 600, color: C.textPrimary, background: "rgba(255,255,255,0.06)", border: `1px solid ${C.glassBorder}`, borderRadius: 6, padding: "6px 14px", cursor: "pointer" }}
+            onClick={fetchData}
+          >
+            Retry
+          </button>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span style={{ fontFamily: "'Space Mono', monospace", fontSize: '9px', color: 'var(--zm-text-faint)' }}>Circ. Supply</span>
-          <span style={{ fontFamily: "'Space Mono', monospace", fontSize: '9px', color: 'var(--zm-text-primary)', opacity: 0.7 }}>{formatCompact(data.circulatingSupply).replace('$', '')}</span>
-        </div>
-      </div>
-    </div>
-  );
-});
-MessariCard.displayName = 'MessariCard';
+      )}
 
-interface TrendingTagsProps {
-  words: { word: string; score: number }[];
-  isLoading: boolean;
-}
-
-const TrendingTags = memo(({ words, isLoading }: TrendingTagsProps) => {
-  if (isLoading) {
-    return <div style={{ background: "var(--zm-card-bg)", border: "1px solid var(--zm-card-border)", borderRadius: "var(--zm-card-radius)",  padding: '14px', minHeight: '80px'  }}><Skeleton.Card /></div>;
-  }
-  const maxScore = Math.max(...words.map(w => w.score), 1);
-  return (
-    <div style={{ background: "var(--zm-card-bg)", border: "1px solid var(--zm-card-border)", borderRadius: "var(--zm-card-radius)",  padding: '14px'  }} aria-label="Santiment trending crypto topics">
-      <div style={{
-        fontFamily: "'Space Mono', monospace",
-        fontSize: '9px',
-        color: 'var(--zm-text-faint)',
-        letterSpacing: '0.1em',
-        marginBottom: '10px',
-      }}>
-        TRENDING TOPICS · SANTIMENT
-      </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap' as const, gap: '6px' }}>
-        {words.length === 0 ? (
-          <span style={{ fontFamily: "'Space Mono', monospace", fontSize: '10px', color: 'var(--zm-text-faint)' }}>
-            No trending data available — rate limited or no free quota remaining.
-          </span>
-        ) : words.map(w => {
-          const intensity = w.score / maxScore;
-          const alpha = 0.3 + intensity * 0.7;
-          return (
-            <span key={w.word} style={{
-              fontFamily: "'Space Mono', monospace",
-              fontSize: '10px',
-              padding: '3px 8px',
-              borderRadius: '4px',
-              background: 'rgba(34,211,238,' + (alpha * 0.12).toFixed(2) + ')',
-              border: '1px solid rgba(34,211,238,' + (alpha * 0.3).toFixed(2) + ')',
-              color: 'rgba(34,211,238,' + alpha.toFixed(2) + ')',
-              letterSpacing: '0.04em',
-              willChange: 'transform',
-            }}>
-              {w.word}
-            </span>
-          );
-        })}
-      </div>
-    </div>
-  );
-});
-TrendingTags.displayName = 'TrendingTags';
-
-interface SocialVolumeChartProps {
-  data: { datetime: string; value: number }[];
-  isLoading: boolean;
-}
-
-const SocialVolumeChart = memo(({ data, isLoading }: SocialVolumeChartProps) => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || isLoading || data.length === 0) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const w = canvas.offsetWidth * devicePixelRatio;
-    const h = canvas.offsetHeight * devicePixelRatio;
-    canvas.width  = w;
-    canvas.height = h;
-    ctx.scale(devicePixelRatio, devicePixelRatio);
-
-    const cw = canvas.offsetWidth;
-    const ch = canvas.offsetHeight;
-    const pad = { t: 8, r: 8, b: 20, l: 32 };
-    const chartW = cw - pad.l - pad.r;
-    const chartH = ch - pad.t - pad.b;
-
-    const maxVal = Math.max(...data.map(d => d.value), 1);
-    const xStep  = chartW / Math.max(data.length - 1, 1);
-
-    ctx.clearRect(0, 0, cw, ch);
-
-    // Fill
-    ctx.beginPath();
-    data.forEach((d, i) => {
-      const x = pad.l + i * xStep;
-      const y = pad.t + chartH * (1 - d.value / maxVal);
-      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-    });
-    ctx.lineTo(pad.l + (data.length - 1) * xStep, pad.t + chartH);
-    ctx.lineTo(pad.l, pad.t + chartH);
-    ctx.closePath();
-    const grad = ctx.createLinearGradient(0, pad.t, 0, pad.t + chartH);
-    grad.addColorStop(0, 'rgba(34,211,238,0.22)');
-    grad.addColorStop(1, 'rgba(34,211,238,0.01)');
-    ctx.fillStyle = grad;
-    ctx.fill();
-
-    // Line
-    ctx.beginPath();
-    data.forEach((d, i) => {
-      const x = pad.l + i * xStep;
-      const y = pad.t + chartH * (1 - d.value / maxVal);
-      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-    });
-    ctx.strokeStyle = 'rgba(0,238,255,0.80)';
-    ctx.lineWidth   = 1.5;
-    ctx.stroke();
-  }, [data, isLoading]);
-
-  return (
-    <div style={{ background: "var(--zm-card-bg)", border: "1px solid var(--zm-card-border)", borderRadius: "var(--zm-card-radius)",  padding: '14px'  }}>
-      <div style={{
-        fontFamily: "'Space Mono', monospace",
-        fontSize: '9px',
-        color: 'var(--zm-text-faint)',
-        letterSpacing: '0.1em',
-        marginBottom: '8px',
-      }}>
-        SOCIAL VOLUME · 24H
-      </div>
-      {isLoading ? (
-        <Skeleton.Card />
-      ) : data.length === 0 ? (
-        <div style={{ fontFamily: "'Space Mono', monospace", fontSize: '10px', color: 'var(--zm-text-faint)', padding: '12px 0' }}>
-          No social volume data — Santiment may be rate limited.
-        </div>
-      ) : (
-        <canvas
-          ref={canvasRef}
-          style={{ width: '100%', height: '80px', display: 'block' }}
-          aria-label="Social volume chart over 24 hours"
-          role="img"
-        />
+      {!loading && !error && (
+        filteredNews.length === 0
+          ? <EmptyState category={category} onRetry={fetchData} />
+          : <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {filteredNews.map(item => <NewsCard key={item.id} item={item} isMobile={isMobile} />)}
+            </div>
       )}
     </div>
   );
 });
-SocialVolumeChart.displayName = 'SocialVolumeChart';
-
-// ─── Main Page ────────────────────────────────────────────────────────────────
-
-const Intelligence = memo(() => {
-  const mountedRef = useRef(true);
-  const { assets } = useCrypto();
-  const { isMobile, isTablet } = useBreakpoint();
-  const [activeSymbol, setActiveSymbol] = useState<Symbol>('BTC');
-
-  const messari  = useMessari();
-  const santiment = useSantiment(SLUG_MAP[activeSymbol]);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => { mountedRef.current = false; };
-  }, []);
-
-  const handleSymbolChange = useCallback((sym: Symbol) => {
-    if (!mountedRef.current) return;
-    setActiveSymbol(sym);
-  }, []);
-
-  const currentAsset = useMemo(() =>
-    assets.find(a => a.symbol.toLowerCase() === activeSymbol.toLowerCase()),
-    [assets, activeSymbol]
-  );
-
-  const aiGridStyle = useMemo(() => ({
-    display: 'grid',
-    gridTemplateColumns: isMobile ? '1fr' : isTablet ? 'repeat(2, 1fr)' : 'repeat(3, 1fr)',
-    gap: '14px',
-    marginBottom: '20px',
-  }), [isMobile, isTablet]);
-
-  const fundamentalGridStyle = useMemo(() => ({
-    display: 'grid',
-    gridTemplateColumns: isMobile ? '1fr' : isTablet ? 'repeat(2, 1fr)' : 'repeat(3, 1fr)',
-    gap: '14px',
-    marginBottom: '20px',
-  }), [isMobile, isTablet]);
-
-  const socialGridStyle = useMemo(() => ({
-    display: 'grid',
-    gridTemplateColumns: isMobile ? '1fr' : '2fr 1fr',
-    gap: '14px',
-  }), [isMobile]);
-
-  const symbolBarStyle = useMemo(() => ({
-    display: 'flex',
-    gap: '6px',
-    marginBottom: '20px',
-  }), []);
-
-  const headerStyle = useMemo(() => ({
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: '20px',
-  }), []);
-
-  return (
-    <motion.div variants={containerVariants} initial="hidden" animate="visible" style={{ padding: isMobile ? '16px' : isTablet ? '20px' : '28px' }}>
-
-      {/* Header */}
-      <motion.div variants={itemVariants} style={headerStyle}>
-        <div>
-          <h1 style={{
-            fontFamily: "'Space Mono', monospace",
-            fontSize: '18px',
-            fontWeight: 700,
-            color: 'var(--zm-text-primary)',
-            letterSpacing: '0.04em',
-          }}>
-            AI Intelligence
-          </h1>
-          <p style={{
-            fontFamily: "'Space Mono', monospace",
-            fontSize: '10px',
-            color: 'var(--zm-text-faint)',
-            letterSpacing: '0.08em',
-            marginTop: '3px',
-          }}>
-            TensorFlow.js · Messari · Santiment
-          </p>
-        </div>
-        <div style={{
-          fontFamily: "'Space Mono', monospace",
-          fontSize: '10px',
-          color: 'var(--zm-violet)',
-          background: 'var(--zm-violet-bg)',
-          border: '1px solid var(--zm-violet-border)',
-          borderRadius: '6px',
-          padding: '5px 12px',
-        }}>
-          PHASE 10 · AI LAYER
-        </div>
-      </motion.div>
-
-      {/* Symbol Selector */}
-      <motion.div variants={itemVariants} style={symbolBarStyle} role="group" aria-label="Select asset for analysis">
-        {SYMBOLS.map(sym => (
-          <button
-            key={sym}
-            type="button"
-            onClick={() => handleSymbolChange(sym)}
-            aria-pressed={activeSymbol === sym}
-            style={{
-              fontFamily: "'Space Mono', monospace",
-              fontSize: '11px',
-              letterSpacing: '0.08em',
-              padding: '6px 16px',
-              borderRadius: '6px',
-              background: activeSymbol === sym ? 'var(--zm-violet-bg)' : 'var(--zm-surface-1)',
-              border: '1px solid ' + (activeSymbol === sym ? 'var(--zm-violet-border)' : 'var(--zm-divider)'),
-              color: activeSymbol === sym ? 'var(--zm-violet)' : 'var(--zm-text-secondary)',
-              cursor: 'pointer',
-              willChange: 'transform',
-            }}
-            aria-label={'Analyze ' + sym}
-          >
-            {sym}
-          </button>
-        ))}
-        {currentAsset && (
-          <div style={{
-            marginLeft: 'auto',
-            fontFamily: "'Space Mono', monospace",
-            fontSize: '12px',
-            color: 'var(--zm-text-secondary)',
-            alignSelf: 'center',
-          }}>
-            {formatPrice(currentAsset.price)}
-            <span style={{ color: currentAsset.change24h >= 0 ? 'var(--zm-positive)' : 'var(--zm-negative)', marginLeft: '6px' }}>
-              {formatChange(currentAsset.change24h)}
-            </span>
-          </div>
-        )}
-      </motion.div>
-
-      {/* AI Signal Tiles */}
-      <motion.div variants={itemVariants}>
-        <SectionHeader label="⬡ AI Signal Layer · TensorFlow.js" color="var(--zm-violet)" />
-        <div style={aiGridStyle}>
-          {SYMBOLS.map(sym => (
-            <Suspense key={sym} fallback={<div style={{ background: "var(--zm-card-bg)", border: "1px solid var(--zm-card-border)", borderRadius: "var(--zm-card-radius)",  height: 340  }}><Skeleton.Card /></div>}>
-              <AISignalTile symbol={sym} />
-            </Suspense>
-          ))}
-        </div>
-      </motion.div>
-
-      {/* Messari Fundamentals */}
-      <motion.div variants={itemVariants}>
-        <SectionHeader label="◈ Fundamental Data · Messari" color="var(--zm-accent)" />
-        <div style={fundamentalGridStyle}>
-          <MessariCard
-            asset="BTC"
-            data={messari.metrics['bitcoin']}
-            isLoading={messari.isLoading}
-          />
-          <MessariCard
-            asset="ETH"
-            data={messari.metrics['ethereum']}
-            isLoading={messari.isLoading}
-          />
-          <MessariCard
-            asset="SOL"
-            data={messari.metrics['solana']}
-            isLoading={messari.isLoading}
-          />
-        </div>
-      </motion.div>
-
-      {/* Santiment Social */}
-      <motion.div variants={itemVariants}>
-        <SectionHeader label="◎ Social Intelligence · Santiment" color="var(--zm-cyan)" />
-        <div style={socialGridStyle}>
-          <SocialVolumeChart data={santiment.socialVolume} isLoading={santiment.isLoading} />
-          <TrendingTags words={santiment.trendingTopics} isLoading={santiment.isLoading} />
-        </div>
-      </motion.div>
-
-    </motion.div>
-  );
-});
-Intelligence.displayName = 'Intelligence';
+Intelligence.displayName = "Intelligence";
 
 export default Intelligence;

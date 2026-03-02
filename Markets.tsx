@@ -1,504 +1,357 @@
 /**
- * Markets.tsx — ZERØ MERIDIAN v30 push90
- * push90: Full v30 token migration, perf upgrades, image lazy loading
- * - React.memo + displayName ✓
- * - rgba() + var(--zm-*) v30 ✓
- * - useCallback + useMemo ✓
- * - will-change: transform on animated rows ✓
- * - loading="lazy" on all coin images ✓
+ * Markets.tsx — ZERØ MERIDIAN push98
+ * UPGRADE: Coinbase-style clean design
+ * - Coin logos, name + symbol stacked
+ * - Colored change badges
+ * - Sparkline mini charts
+ * - Search filter + sort headers
+ * - Mobile: 4-col compact
+ * - Desktop: full 7-col
+ * - VirtualList: 100+ assets tanpa lag
  */
 
-import { memo, useState, useCallback, useMemo, useEffect, useRef, Suspense, lazy } from 'react';
-import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
+import { memo, useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { motion } from 'framer-motion';
 import { useCrypto } from '@/contexts/CryptoContext';
 import { useMarketWorker } from '@/hooks/useMarketWorker';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import VirtualList from '@/components/shared/VirtualList';
 import SparklineChart from '@/components/shared/SparklineChart';
-import { formatPrice, formatChange, formatCompact } from '@/lib/formatters';
+import { formatPrice, formatCompact } from '@/lib/formatters';
 import type { CryptoAsset } from '@/lib/formatters';
 
-const TradingViewChart = lazy(() => import('../components/tiles/TradingViewChart'));
-const OrderBookTile    = lazy(() => import('../components/tiles/OrderBookTile'));
+type SK = 'rank'|'name'|'price'|'change24h'|'change7d'|'marketCap'|'volume24h';
+type SD = 'asc'|'desc';
 
-type SortKey = 'rank' | 'name' | 'price' | 'change24h' | 'change7d' | 'marketCap' | 'volume24h';
-type SortDir = 'asc' | 'desc';
-type TVSymbol = 'BTCUSDT' | 'ETHUSDT' | 'SOLUSDT' | 'BNBUSDT';
+const ROW_H  = 52;
+const ROW_HM = 56;
 
-const ROW_HEIGHT        = 40;
-const ROW_HEIGHT_MOBILE = 48;
+// ─── Change badge ─────────────────────────────────────────────────────────────
 
-const SYMBOL_MAP: Record<string, TVSymbol> = Object.freeze({
-  bitcoin: 'BTCUSDT', ethereum: 'ETHUSDT', solana: 'SOLUSDT', binancecoin: 'BNBUSDT',
-});
-
-const ACCENT_MAP: Record<string, string> = Object.freeze({
-  bitcoin:     'rgba(251,191,36,1)',
-  ethereum:    'rgba(96,165,250,1)',
-  solana:      'rgba(167,139,250,1)',
-  binancecoin: 'rgba(251,146,60,1)',
-  ripple:      'rgba(34,211,238,1)',
-  cardano:     'rgba(52,211,153,1)',
-  avalanche:   'rgba(251,113,133,1)',
-  dogecoin:    'rgba(251,191,36,0.8)',
-});
-
-function getAccent(id: string): string { return ACCENT_MAP[id] ?? 'var(--zm-blue)'; }
-
-const ArrowUp = () => (
-  <svg width="9" height="9" viewBox="0 0 9 9" fill="none" aria-hidden="true">
-    <path d="M4.5 1.5l-3 4h6l-3-4z" fill="var(--zm-blue)" />
-  </svg>
-);
-const ArrowDown = () => (
-  <svg width="9" height="9" viewBox="0 0 9 9" fill="none" aria-hidden="true">
-    <path d="M4.5 7.5l-3-4h6l-3 4z" fill="var(--zm-blue)" />
-  </svg>
-);
-const ArrowBoth = () => (
-  <svg width="9" height="9" viewBox="0 0 9 9" fill="none" aria-hidden="true">
-    <path d="M4.5 1l-2 2.5h4L4.5 1zM4.5 8l-2-2.5h4L4.5 8z" fill="currentColor" opacity="0.3" />
-  </svg>
-);
-
-interface HeaderCellProps {
-  label: string; sortKey: SortKey; current: SortKey; dir: SortDir;
-  onSort: (key: SortKey) => void; width?: string | number; align?: 'left' | 'right';
-}
-const HeaderCell = memo(({ label, sortKey, current, dir, onSort, width = 'auto', align = 'right' }: HeaderCellProps) => {
-  const isActive = current === sortKey;
-  const color    = isActive ? 'var(--zm-blue)' : 'var(--zm-text-3)';
+const ChangeBadge = memo(({ val, size = 11 }: { val: number; size?: number }) => {
+  const pos = val >= 0;
   return (
-    <button type="button" onClick={() => onSort(sortKey)}
-      aria-label={'Sort by ' + label}
-      aria-sort={isActive ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+    <span style={{
+      fontFamily:"'JetBrains Mono',monospace", fontSize:size+'px', fontWeight:600,
+      color: pos ? 'rgba(34,255,170,1)' : 'rgba(255,68,136,1)',
+      background: pos ? 'rgba(34,255,170,0.08)' : 'rgba(255,68,136,0.08)',
+      border: '1px solid ' + (pos ? 'rgba(34,255,170,0.2)' : 'rgba(255,68,136,0.2)'),
+      borderRadius:'4px', padding:'2px 6px', whiteSpace:'nowrap' as const,
+    }}>
+      {(pos?'+':'')+val.toFixed(2)+'%'}
+    </span>
+  );
+});
+ChangeBadge.displayName = 'ChangeBadge';
+
+// ─── Sort header ─────────────────────────────────────────────────────────────
+
+const SortHdr = memo(({ label, k, sortKey, sortDir, onSort, align='right', width }:
+  { label:string; k:SK; sortKey:SK; sortDir:SD; onSort:(k:SK)=>void; align?:string; width?:number }) => {
+  const active = sortKey === k;
+  return (
+    <button type="button" onClick={() => onSort(k)}
       style={{
-        fontFamily: 'var(--zm-font-data)', fontSize: 10, textAlign: align,
-        display: 'flex', alignItems: 'center',
-        justifyContent: align === 'right' ? 'flex-end' : 'flex-start',
-        gap: 4, color, background: 'transparent', border: 'none', cursor: 'pointer',
-        padding: 0, width, flexShrink: 0, letterSpacing: '0.06em', minHeight: 36,
+        fontFamily:"'JetBrains Mono',monospace", fontSize:'9px', letterSpacing:'0.1em',
+        color: active ? 'rgba(0,238,255,0.9)' : 'rgba(80,80,100,0.8)',
+        textAlign: align as 'right'|'left'|'center',
+        cursor:'pointer', background:'none', border:'none', padding:'0', display:'flex',
+        alignItems:'center', gap:'3px', justifyContent: align==='right' ? 'flex-end' : 'flex-start',
+        width: width ? width+'px' : undefined, flexShrink:0,
+        transition:'color 0.15s',
       }}>
-      {label}
-      {isActive ? dir === 'asc' ? <ArrowUp /> : <ArrowDown /> : <ArrowBoth />}
+      {label.toUpperCase()}
+      <span style={{ opacity: active ? 1 : 0.3 }}>{active ? (sortDir==='asc' ? '↑' : '↓') : '↕'}</span>
     </button>
   );
 });
-HeaderCell.displayName = 'HeaderCell';
+SortHdr.displayName = 'SortHdr';
 
-interface AssetRowProps {
-  asset: CryptoAsset; index: number;
-  isMobile: boolean; isTablet: boolean;
-  selected: boolean; onClick: (asset: CryptoAsset) => void;
-}
+// ─── Asset Row ────────────────────────────────────────────────────────────────
 
-const AssetRow = memo(({ asset, index, isMobile, isTablet, selected, onClick }: AssetRowProps) => {
-  const ref       = useRef<HTMLDivElement>(null);
-  const prevPrice = useRef(asset.price);
-  const mountRef  = useRef(true);
+const AssetRow = memo(({ asset, index, isMobile }: { asset:CryptoAsset; index:number; isMobile:boolean }) => {
+  const ref = useRef<HTMLDivElement>(null);
+  const prev = useRef(asset.price);
+  const m = useRef(true);
 
-  useEffect(() => { mountRef.current = true; return () => { mountRef.current = false; }; }, []);
+  useEffect(() => { m.current = true; return () => { m.current = false; }; }, []);
 
   useEffect(() => {
-    if (!mountRef.current || !ref.current) return;
-    if (asset.price === prevPrice.current) return;
-    const cls = asset.priceDirection === 'up' ? 'animate-flash-pos'
-      : asset.priceDirection === 'down' ? 'animate-flash-neg' : '';
-    if (!cls) { prevPrice.current = asset.price; return; }
-    ref.current.classList.remove('animate-flash-pos', 'animate-flash-neg');
+    if (!m.current || !ref.current || asset.price === prev.current) return;
+    const cls = asset.priceDirection==='up' ? 'animate-flash-pos' : asset.priceDirection==='down' ? 'animate-flash-neg' : '';
+    if (!cls) { prev.current = asset.price; return; }
+    ref.current.classList.remove('animate-flash-pos','animate-flash-neg');
     void ref.current.offsetWidth;
     ref.current.classList.add(cls);
-    prevPrice.current = asset.price;
-    const t = setTimeout(() => { if (mountRef.current) ref.current?.classList.remove(cls); }, 300);
+    prev.current = asset.price;
+    const t = setTimeout(() => { if (m.current) ref.current?.classList.remove(cls); }, 300);
     return () => clearTimeout(t);
   }, [asset.price, asset.priceDirection]);
 
-  const accent        = getAccent(asset.id);
-  const rowHeight     = isMobile ? ROW_HEIGHT_MOBILE : ROW_HEIGHT;
-  const change24Color = asset.change24h >= 0 ? 'var(--zm-green)' : 'var(--zm-red)';
-  const change7dColor = (asset.change7d ?? 0) >= 0 ? 'var(--zm-green)' : 'var(--zm-red)';
-  const rowBg         = selected ? 'var(--zm-surface-active)'
-    : index % 2 === 0 ? 'rgba(255,255,255,0.012)' : 'transparent';
-  const handleClick   = useCallback(() => onClick(asset), [onClick, asset]);
+  const bg = index%2===0 ? 'rgba(255,255,255,0.01)' : 'transparent';
+  const h = isMobile ? ROW_HM : ROW_H;
 
   if (isMobile) {
     return (
-      <div ref={ref} onClick={handleClick} role="button" tabIndex={0}
-        aria-label={'View ' + asset.name + ' detail'}
-        style={{
-          height: rowHeight, background: rowBg, cursor: 'pointer',
-          borderBottom: '1px solid var(--zm-border)',
-          borderLeft: selected ? '2px solid ' + accent : '2px solid transparent',
-          display: 'grid', gridTemplateColumns: '28px 1fr 90px 64px',
-          alignItems: 'center', padding: '0 12px', gap: 8,
-          willChange: 'transform', transition: 'background 0.15s, border-color 0.15s',
-        }}
-        onMouseEnter={e => { if (!selected) e.currentTarget.style.background = 'var(--zm-surface-hover)'; }}
-        onMouseLeave={e => { if (!selected) e.currentTarget.style.background = rowBg; }}>
-        <span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 10, textAlign: 'right', color: 'var(--zm-text-3)' }}>{asset.rank}</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+      <div ref={ref} style={{ height:h, background:bg,
+        borderBottom:'1px solid rgba(255,255,255,0.04)',
+        display:'grid', gridTemplateColumns:'28px 1fr 90px 72px',
+        alignItems:'center', padding:'0 12px', gap:'8px', willChange:'transform',
+        transition:'background 0.12s' }}
+        onMouseEnter={e=>{e.currentTarget.style.background='rgba(0,238,255,0.03)';}}
+        onMouseLeave={e=>{e.currentTarget.style.background=bg;}}>
+        <span style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:'10px',
+          color:'rgba(80,80,100,0.7)', textAlign:'right' }}>{asset.rank}</span>
+        <div style={{ display:'flex', alignItems:'center', gap:'6px', minWidth:0 }}>
           {asset.image
-            ? <img src={asset.image} alt="" loading="lazy" decoding="async" style={{ width: 18, height: 18, borderRadius: '50%', flexShrink: 0 }} />
-            : <div style={{ width: 18, height: 18, borderRadius: '50%', flexShrink: 0, background: accent + '33' }} />}
-          <span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 11, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--zm-text-1)' }}>
-            {asset.symbol.toUpperCase()}
-          </span>
+            ? <img src={asset.image} alt="" style={{ width:'22px', height:'22px', borderRadius:'50%', flexShrink:0 }} />
+            : <div style={{ width:'22px', height:'22px', borderRadius:'50%', flexShrink:0, background:'rgba(0,238,255,0.15)' }} />}
+          <div style={{ minWidth:0 }}>
+            <div style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:'11px', fontWeight:700,
+              color:'rgba(230,230,242,1)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' as const }}>
+              {asset.symbol.toUpperCase()}
+            </div>
+            <div style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:'9px',
+              color:'rgba(80,80,100,0.7)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' as const }}>
+              {asset.name}
+            </div>
+          </div>
         </div>
-        <span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 11, textAlign: 'right', color: 'var(--zm-text-1)' }}>{formatPrice(asset.price)}</span>
-        <span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 11, textAlign: 'right', color: change24Color }}>{formatChange(asset.change24h)}</span>
+        <span style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:'11px',
+          textAlign:'right', color:'rgba(230,230,242,1)' }}>{formatPrice(asset.price)}</span>
+        <div style={{ display:'flex', justifyContent:'flex-end' }}>
+          <ChangeBadge val={asset.change24h} size={10} />
+        </div>
       </div>
     );
   }
 
   return (
-    <div ref={ref} onClick={handleClick} role="button" tabIndex={0}
-      aria-label={'View ' + asset.name + ' detail'}
-      style={{
-        height: rowHeight, background: rowBg, cursor: 'pointer',
-        borderBottom: '1px solid var(--zm-border)',
-        borderLeft: selected ? '2px solid ' + accent : '2px solid transparent',
-        display: 'flex', alignItems: 'center',
-        padding: selected ? '0 16px 0 14px' : '0 16px',
-        gap: 12, willChange: 'transform', transition: 'background 0.15s, border-color 0.15s',
-      }}
-      onMouseEnter={e => { if (!selected) e.currentTarget.style.background = 'var(--zm-surface-hover)'; }}
-      onMouseLeave={e => { if (!selected) e.currentTarget.style.background = rowBg; }}>
+    <div ref={ref} style={{ height:h, background:bg,
+      borderBottom:'1px solid rgba(255,255,255,0.035)',
+      display:'flex', alignItems:'center', padding:'0 16px', gap:'0',
+      transition:'background 0.12s', willChange:'transform', cursor:'pointer' }}
+      onMouseEnter={e=>{e.currentTarget.style.background='rgba(0,238,255,0.025)';}}
+      onMouseLeave={e=>{e.currentTarget.style.background=bg;}}>
 
-      <span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 11, width: 28, flexShrink: 0, textAlign: 'right', color: 'var(--zm-text-3)' }}>{asset.rank}</span>
+      {/* Rank */}
+      <span style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:'11px',
+        width:'36px', flexShrink:0, textAlign:'right', color:'rgba(80,80,100,0.6)', paddingRight:'12px' }}>
+        {asset.rank}
+      </span>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: isTablet ? 170 : 150, flexShrink: 0 }}>
+      {/* Asset */}
+      <div style={{ display:'flex', alignItems:'center', gap:'10px', width:'180px', flexShrink:0 }}>
         {asset.image
-          ? <img src={asset.image} alt="" loading="lazy" decoding="async" style={{ width: 20, height: 20, borderRadius: '50%', flexShrink: 0 }} />
-          : <div style={{ width: 20, height: 20, borderRadius: '50%', flexShrink: 0, background: accent + '33' }} />}
-        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          <span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 11, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--zm-text-1)' }}>
-            {asset.symbol.toUpperCase()}
-          </span>
-          <span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 9, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--zm-text-3)' }}>
-            {asset.name}
-          </span>
+          ? <img src={asset.image} alt="" style={{ width:'28px', height:'28px', borderRadius:'50%', flexShrink:0 }} />
+          : <div style={{ width:'28px', height:'28px', borderRadius:'50%', flexShrink:0, background:'rgba(0,238,255,0.1)' }} />}
+        <div>
+          <div style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:'12px', fontWeight:700,
+            color:'rgba(230,230,242,1)' }}>{asset.symbol.toUpperCase()}</div>
+          <div style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:'9px',
+            color:'rgba(80,80,100,0.7)' }}>{asset.name}</div>
         </div>
       </div>
 
-      <span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 11, width: isTablet ? 115 : 100, flexShrink: 0, textAlign: 'right', color: 'var(--zm-text-1)' }}>
+      {/* Price */}
+      <span style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:'12px', fontWeight:600,
+        marginLeft:'auto', color:'rgba(230,230,242,1)', minWidth:'110px', textAlign:'right' }}>
         {formatPrice(asset.price)}
       </span>
-      <span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 11, width: 72, flexShrink: 0, textAlign: 'right', color: change24Color }}>
-        {formatChange(asset.change24h)}
-      </span>
-      {!isTablet && (
-        <span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 11, width: 72, flexShrink: 0, textAlign: 'right', color: change7dColor }}>
-          {formatChange(asset.change7d ?? 0)}
-        </span>
-      )}
-      <span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 11, width: isTablet ? 115 : 100, flexShrink: 0, textAlign: 'right', color: 'var(--zm-text-2)' }}>
+
+      {/* 24h */}
+      <div style={{ minWidth:'90px', display:'flex', justifyContent:'flex-end', paddingRight:'12px' }}>
+        <ChangeBadge val={asset.change24h} />
+      </div>
+
+      {/* 7d */}
+      <div style={{ minWidth:'80px', display:'flex', justifyContent:'flex-end', paddingRight:'12px' }}>
+        <ChangeBadge val={asset.change7d ?? 0} size={10} />
+      </div>
+
+      {/* Market Cap */}
+      <span style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:'11px',
+        minWidth:'100px', textAlign:'right', color:'rgba(138,138,158,0.7)', paddingRight:'12px' }}>
         {formatCompact(asset.marketCap)}
       </span>
-      {!isTablet && (
-        <span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 11, width: 100, flexShrink: 0, textAlign: 'right', color: 'var(--zm-text-2)' }}>
-          {formatCompact(asset.volume24h)}
-        </span>
-      )}
-      {!isTablet && (
-        <div style={{ marginLeft: 'auto', flexShrink: 0 }}>
-          {asset.sparkline && asset.sparkline.length > 1 && (
-            <SparklineChart data={asset.sparkline} width={80} height={28} color="auto" />
-          )}
-        </div>
-      )}
+
+      {/* Volume */}
+      <span style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:'11px',
+        minWidth:'90px', textAlign:'right', color:'rgba(138,138,158,0.55)', paddingRight:'12px' }}>
+        {formatCompact(asset.volume24h)}
+      </span>
+
+      {/* Sparkline */}
+      <div style={{ width:'80px', flexShrink:0 }}>
+        {asset.sparkline && asset.sparkline.length > 0 && (
+          <SparklineChart data={asset.sparkline} positive={(asset.change7d ?? 0) >= 0} width={80} height={32} />
+        )}
+      </div>
     </div>
   );
 });
 AssetRow.displayName = 'AssetRow';
 
-interface StatBoxProps { label: string; value: string; color?: string; }
-const StatBox = memo(({ label, value, color }: StatBoxProps) => (
-  <div style={{
-    display: 'flex', flexDirection: 'column', gap: 3,
-    padding: '8px 10px', borderRadius: 8,
-    background: 'var(--zm-surface)', border: '1px solid var(--zm-border)',
-    flex: 1, minWidth: 0,
-  }}>
-    <span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 9, color: 'var(--zm-text-3)', letterSpacing: '0.1em', textTransform: 'uppercase' as const }}>
-      {label}
-    </span>
-    <span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 12, fontWeight: 700, color: color ?? 'var(--zm-text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
-      {value}
-    </span>
-  </div>
-));
-StatBox.displayName = 'StatBox';
+// ─── Markets ──────────────────────────────────────────────────────────────────
 
-interface AssetDetailPanelProps {
-  asset: CryptoAsset; onClose: () => void; isMobile: boolean; isTablet: boolean;
-}
-
-const AssetDetailPanel = memo(({ asset, onClose, isMobile, isTablet }: AssetDetailPanelProps) => {
-  const prefersReducedMotion = useReducedMotion();
-  const accent      = getAccent(asset.id);
-  const tvSymbol    = SYMBOL_MAP[asset.id] as TVSymbol | undefined;
-  const change24h   = asset.change24h;
-  const isPos       = change24h >= 0;
-  const changeColor = isPos ? 'var(--zm-green)' : 'var(--zm-red)';
-
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', h);
-    return () => window.removeEventListener('keydown', h);
-  }, [onClose]);
-
-  const panelVariants = {
-    hidden:  { x: '100%', opacity: 0 },
-    visible: { x: 0, opacity: 1, transition: prefersReducedMotion ? { duration: 0 } : { type: 'spring', damping: 28, stiffness: 280 } },
-    exit:    { x: '100%', opacity: 0, transition: prefersReducedMotion ? { duration: 0 } : { duration: 0.22, ease: [0.36, 0, 0.66, 0] } },
-  };
-
-  const panelWidth = isMobile ? '100vw' : isTablet ? '380px' : '480px';
-  const accentBorder = accent.replace('1)', '0.22)');
-
-  return (
-    <>
-      <motion.div
-        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-        transition={{ duration: 0.2 }} onClick={onClose}
-        style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(4,5,10,0.65)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}
-        aria-label="Close panel"
-      />
-      <motion.div
-        variants={panelVariants} initial="hidden" animate="visible" exit="exit"
-        style={{
-          position: 'fixed', top: 0, right: 0, bottom: 0, width: panelWidth,
-          zIndex: 201, background: 'var(--zm-bg-2)',
-          borderLeft: '1px solid ' + accentBorder,
-          display: 'flex', flexDirection: 'column', overflow: 'hidden', willChange: 'transform',
-        }}
-        role="dialog" aria-label={'Asset detail: ' + asset.name} aria-modal="true"
-      >
-        <div style={{
-          padding: '16px 20px 12px', borderBottom: '1px solid var(--zm-border)',
-          display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
-          flexShrink: 0, background: 'var(--zm-bg)',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            {asset.image
-              ? <img src={asset.image} alt="" loading="lazy" decoding="async" style={{ width: 36, height: 36, borderRadius: '50%', flexShrink: 0, border: '1px solid ' + accentBorder }} />
-              : <div style={{ width: 36, height: 36, borderRadius: '50%', flexShrink: 0, background: accent + '20' }} />}
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 16, fontWeight: 700, color: 'var(--zm-text-1)', letterSpacing: '0.04em' }}>{asset.symbol.toUpperCase()}</span>
-                <span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 11, color: 'var(--zm-text-3)' }}>{asset.name}</span>
-                <span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 9, padding: '1px 6px', borderRadius: 4, background: 'var(--zm-surface)', color: 'var(--zm-text-2)' }}>{'#' + asset.rank}</span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 3 }}>
-                <span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 22, fontWeight: 700, color: accent, letterSpacing: '0.02em' }}>{formatPrice(asset.price)}</span>
-                <span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 12, color: changeColor, fontWeight: 600 }}>{isPos ? '+' : ''}{change24h.toFixed(2)}%</span>
-              </div>
-            </div>
-          </div>
-          <button type="button" onClick={onClose} aria-label="Close panel"
-            style={{
-              width: 32, height: 32, borderRadius: 8, flexShrink: 0,
-              background: 'var(--zm-surface)', border: '1px solid var(--zm-border)',
-              color: 'var(--zm-text-2)', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 16, fontWeight: 300, willChange: 'transform',
-            }}>✕</button>
-        </div>
-
-        <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-            <StatBox label="24h High"    value={formatPrice(asset.high24h ?? asset.price)} />
-            <StatBox label="24h Low"     value={formatPrice(asset.low24h  ?? asset.price)} />
-            <StatBox label="7d Change"   value={formatChange(asset.change7d ?? 0)} color={(asset.change7d ?? 0) >= 0 ? 'var(--zm-green)' : 'var(--zm-red)'} />
-            <StatBox label="Mkt Cap"     value={formatCompact(asset.marketCap)} />
-            <StatBox label="Volume 24h"  value={formatCompact(asset.volume24h)} />
-            <StatBox label="Circ Supply" value={formatCompact(asset.circulatingSupply)} />
-          </div>
-          {asset.ath && (
-            <div style={{ display: 'flex', gap: 8 }}>
-              <StatBox label="All-Time High" value={formatPrice(asset.ath)} color="var(--zm-amber)" />
-            </div>
-          )}
-          {asset.sparkline && asset.sparkline.length > 1 && (
-            <div style={{ padding: '12px 14px', borderRadius: 10, background: 'var(--zm-surface)', border: '1px solid var(--zm-border)' }}>
-              <div style={{ fontFamily: 'var(--zm-font-data)', fontSize: 9, color: 'var(--zm-text-3)', letterSpacing: '0.1em', marginBottom: 8 }}>7D PRICE CHART</div>
-              <SparklineChart data={asset.sparkline} width={isMobile ? 300 : 340} height={60} color={accent} />
-            </div>
-          )}
-          {tvSymbol ? (
-            <div style={{ borderRadius: 10, overflow: 'hidden', border: '1px solid var(--zm-border)' }}>
-              <div style={{ fontFamily: 'var(--zm-font-data)', fontSize: 9, color: 'var(--zm-text-3)', letterSpacing: '0.1em', padding: '10px 14px 0' }}>LIVE CANDLESTICK</div>
-              <Suspense fallback={<div style={{ height: 280, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 10, color: 'var(--zm-text-3)' }}>Loading chart...</span></div>}>
-                <TradingViewChart defaultSymbol={tvSymbol} height={300} />
-              </Suspense>
-            </div>
-          ) : (
-            <div style={{ padding: '20px', borderRadius: 10, textAlign: 'center', background: 'var(--zm-surface)', border: '1px solid var(--zm-border)' }}>
-              <span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 10, color: 'var(--zm-text-3)' }}>Live chart available for BTC · ETH · SOL · BNB</span>
-            </div>
-          )}
-          {tvSymbol && (
-            <div style={{ borderRadius: 10, overflow: 'hidden', border: '1px solid var(--zm-border)' }}>
-              <div style={{ fontFamily: 'var(--zm-font-data)', fontSize: 9, color: 'var(--zm-text-3)', letterSpacing: '0.1em', padding: '10px 14px 6px' }}>ORDER BOOK</div>
-              <Suspense fallback={<div style={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 10, color: 'var(--zm-text-3)' }}>Loading...</span></div>}>
-                <OrderBookTile />
-              </Suspense>
-            </div>
-          )}
-          <a href={'https://www.binance.com/en/trade/' + asset.symbol.toUpperCase() + '_USDT'}
-            target="_blank" rel="noopener noreferrer"
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-              padding: '10px', borderRadius: 8, background: 'var(--zm-amber-bg)',
-              border: '1px solid var(--zm-amber-border)', color: 'var(--zm-amber)',
-              textDecoration: 'none', fontFamily: 'var(--zm-font-data)',
-              fontSize: 11, letterSpacing: '0.08em', marginBottom: 8,
-            }}>
-            <span>TRADE ON BINANCE</span>
-            <span style={{ opacity: 0.6 }}>↗</span>
-          </a>
-        </div>
-      </motion.div>
-    </>
-  );
-});
-AssetDetailPanel.displayName = 'AssetDetailPanel';
-
-// ─── Markets Page ─────────────────────────────────────────────────────────────
 const Markets = memo(() => {
-  const { assets }             = useCrypto();
-  const worker                 = useMarketWorker();
-  const { isMobile, isTablet } = useBreakpoint();
+  const { assets } = useCrypto();
+  const { isMobile } = useBreakpoint();
+  const [sortKey, setSortKey] = useState<SK>('rank');
+  const [sortDir, setSortDir] = useState<SD>('asc');
+  const [search, setSearch] = useState('');
+  const searchRef = useRef('');
+  const m = useRef(true);
 
-  const [query,         setQuery]         = useState('');
-  const [sortKey,       setSortKey]       = useState<SortKey>('rank');
-  const [sortDir,       setSortDir]       = useState<SortDir>('asc');
-  const [filtered,      setFiltered]      = useState<CryptoAsset[]>(assets);
-  const [isWorking,     setIsWorking]     = useState(false);
-  const [selectedAsset, setSelectedAsset] = useState<CryptoAsset | null>(null);
-  const mountedRef = useRef(true);
+  useEffect(() => { m.current = true; return () => { m.current = false; }; }, []);
 
-  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
+  const [sorted, setSorted] = useState<CryptoAsset[]>([]);
+  const marketWorker = useMarketWorker();
 
+  // Run sort+filter via worker whenever deps change
   useEffect(() => {
-    if (assets.length === 0) return;
-    setIsWorking(true);
-    worker.sortAndFilter(assets, sortKey, sortDir, query)
-      .then(result => { if (!mountedRef.current) return; setFiltered(result.assets); })
+    let cancelled = false;
+    marketWorker.sortAndFilter(assets, sortKey, sortDir, search)
+      .then(result => { if (!cancelled && m.current) setSorted(result.assets); })
       .catch(() => {
-        if (!mountedRef.current) return;
-        const q = query.toLowerCase();
-        const list = assets.filter(a => !q || a.name.toLowerCase().includes(q) || a.symbol.toLowerCase().includes(q));
-        list.sort((a, b) => {
-          const mul = sortDir === 'asc' ? 1 : -1;
-          if (sortKey === 'name') return mul * a.name.localeCompare(b.name);
-          return mul * ((a[sortKey] as number ?? 0) - (b[sortKey] as number ?? 0));
+        // Worker unavailable — sort inline as fallback
+        if (cancelled || !m.current) return;
+        const q = search.toLowerCase();
+        let filtered = q
+          ? assets.filter(a => a.name.toLowerCase().includes(q) || a.symbol.toLowerCase().includes(q))
+          : [...assets];
+        filtered.sort((a, b) => {
+          const av = (a as Record<string, unknown>)[sortKey] ?? 0;
+          const bv = (b as Record<string, unknown>)[sortKey] ?? 0;
+          const cmp = typeof av === 'string'
+            ? (av as string).localeCompare(bv as string)
+            : (av as number) - (bv as number);
+          return sortDir === 'asc' ? cmp : -cmp;
         });
-        setFiltered(list);
-      })
-      .finally(() => { if (mountedRef.current) setIsWorking(false); });
-  }, [assets, sortKey, sortDir, query, worker]);
+        setSorted(filtered);
+      });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assets, sortKey, sortDir, search]);
 
-  const handleSort        = useCallback((key: SortKey) => {
-    setSortKey(prev => { if (prev === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc'); else setSortDir('desc'); return key; });
+  const handleSort = useCallback((k: SK) => {
+    if (!m.current) return;
+    setSortDir(d => sortKey === k ? (d==='asc'?'desc':'asc') : 'desc');
+    setSortKey(k);
+  }, [sortKey]);
+
+  const handleSearch = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!m.current) return;
+    searchRef.current = e.target.value;
+    setSearch(e.target.value);
   }, []);
-  const handleSearch      = useCallback((e: React.ChangeEvent<HTMLInputElement>) => { setQuery(e.target.value); }, []);
-  const handleSelectAsset = useCallback((asset: CryptoAsset) => { setSelectedAsset(prev => prev?.id === asset.id ? null : asset); }, []);
-  const handleClosePanel  = useCallback(() => { setSelectedAsset(null); }, []);
 
-  const rowHeight  = isMobile ? ROW_HEIGHT_MOBILE : ROW_HEIGHT;
-  const renderRow  = useCallback((asset: CryptoAsset, index: number) => (
-    <AssetRow asset={asset} index={index} isMobile={isMobile} isTablet={isTablet}
-      selected={selectedAsset?.id === asset.id} onClick={handleSelectAsset} />
-  ), [isMobile, isTablet, selectedAsset?.id, handleSelectAsset]);
-  const getKey     = useCallback((asset: CryptoAsset) => asset.id, []);
-  const listHeight = useMemo(() => Math.min(window.innerHeight - 240, filtered.length * rowHeight), [filtered.length, rowHeight]);
+  const rowHeight = isMobile ? ROW_HM : ROW_H;
 
-  const headerRow = useMemo(() => {
-    const base = {
-      position: 'sticky' as const, top: 0, zIndex: 10,
-      height: 36, background: 'var(--zm-bg)',
-      borderBottom: '1px solid var(--zm-border)',
-      backdropFilter: 'blur(12px)',
-    };
-    if (isMobile) return (
-      <div style={{ ...base, display: 'grid', gridTemplateColumns: '28px 1fr 90px 64px', alignItems: 'center', padding: '0 12px', gap: 8 }}>
-        <span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 9, color: 'var(--zm-text-3)', textAlign: 'right' }}>#</span>
-        <HeaderCell label="Asset"  sortKey="name"      current={sortKey} dir={sortDir} onSort={handleSort} width="100%" align="left" />
-        <HeaderCell label="Price"  sortKey="price"     current={sortKey} dir={sortDir} onSort={handleSort} width={90} />
-        <HeaderCell label="24h"    sortKey="change24h" current={sortKey} dir={sortDir} onSort={handleSort} width={64} />
-      </div>
-    );
-    if (isTablet) return (
-      <div style={{ ...base, display: 'flex', alignItems: 'center', padding: '0 16px', gap: 12 }}>
-        <span style={{ width: 28, flexShrink: 0 }} />
-        <span style={{ width: 170, flexShrink: 0 }}>
-          <HeaderCell label="Asset"  sortKey="name"      current={sortKey} dir={sortDir} onSort={handleSort} width={170} align="left" />
-        </span>
-        <HeaderCell label="Price"   sortKey="price"     current={sortKey} dir={sortDir} onSort={handleSort} width={115} />
-        <HeaderCell label="24h"     sortKey="change24h" current={sortKey} dir={sortDir} onSort={handleSort} width={72} />
-        <HeaderCell label="Mkt Cap" sortKey="marketCap" current={sortKey} dir={sortDir} onSort={handleSort} width={115} />
-      </div>
-    );
-    return (
-      <div style={{ ...base, display: 'flex', alignItems: 'center', padding: '0 16px', gap: 12 }}>
-        <span style={{ width: 28, flexShrink: 0 }} />
-        <span style={{ width: 150, flexShrink: 0 }}>
-          <HeaderCell label="Asset"   sortKey="name"      current={sortKey} dir={sortDir} onSort={handleSort} width={150} align="left" />
-        </span>
-        <HeaderCell label="Price"    sortKey="price"     current={sortKey} dir={sortDir} onSort={handleSort} width={100} />
-        <HeaderCell label="24h"      sortKey="change24h" current={sortKey} dir={sortDir} onSort={handleSort} width={72} />
-        <HeaderCell label="7d"       sortKey="change7d"  current={sortKey} dir={sortDir} onSort={handleSort} width={72} />
-        <HeaderCell label="Mkt Cap"  sortKey="marketCap" current={sortKey} dir={sortDir} onSort={handleSort} width={100} />
-        <HeaderCell label="Volume"   sortKey="volume24h" current={sortKey} dir={sortDir} onSort={handleSort} width={100} />
-        <span style={{ marginLeft: 'auto', fontFamily: 'var(--zm-font-data)', fontSize: 10, color: 'var(--zm-text-3)', letterSpacing: '0.06em' }}>7d Chart</span>
-      </div>
-    );
-  }, [isMobile, isTablet, sortKey, sortDir, handleSort]);
+  const renderRow = useCallback((asset: CryptoAsset, index: number) => (
+    <AssetRow key={asset.id} asset={asset} index={index} isMobile={isMobile} />
+  ), [isMobile]);
+
+  const containerStyle = useMemo(() => ({
+    background:'rgba(8,10,18,1)', borderRadius:'12px',
+    border:'1px solid rgba(255,255,255,0.06)', overflow:'hidden' as const,
+  }), []);
+
+  const headerStyle = useMemo(() => ({
+    padding: isMobile ? '12px 12px 10px' : '14px 16px 12px',
+    borderBottom:'1px solid rgba(255,255,255,0.05)',
+    display:'flex', alignItems:'center', gap:'12px', flexWrap:'wrap' as const,
+    background:'rgba(255,255,255,0.015)',
+  }), [isMobile]);
+
+  const colHdrStyle = useMemo(() => ({
+    display: isMobile ? 'none' : 'flex',
+    alignItems:'center', padding:'8px 16px',
+    borderBottom:'1px solid rgba(255,255,255,0.04)',
+    background:'rgba(255,255,255,0.01)',
+    position:'sticky' as const, top:0, zIndex:2,
+  }), [isMobile]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, position: 'relative' }} role="main" aria-label="Live Markets">
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <h1 style={{ fontSize: isMobile ? 16 : 20, fontWeight: 700, fontFamily: 'var(--zm-font-ui)', color: 'var(--zm-text-1)', letterSpacing: '-0.02em', margin: 0 }}>
-            Live Markets
-          </h1>
-          <span style={{ fontSize: 11, fontFamily: 'var(--zm-font-data)', padding: '2px 8px', borderRadius: 4, background: 'var(--zm-green-bg)', color: 'var(--zm-green)', border: '1px solid var(--zm-green-border)' }}>
-            {filtered.length + ' assets'}
-          </span>
-          {isWorking && <span style={{ fontSize: 11, fontFamily: 'var(--zm-font-data)', color: 'var(--zm-text-3)' }}>sorting...</span>}
+    <div style={{ padding: isMobile ? '12px' : '16px 20px' }}>
+      {/* Header */}
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'16px', flexWrap:'wrap' as const, gap:'10px' }}>
+        <div>
+          <h1 style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:'16px', fontWeight:700,
+            color:'rgba(230,230,242,1)', margin:0, letterSpacing:'0.06em' }}>MARKETS</h1>
+          <p style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:'10px',
+            color:'rgba(80,80,100,0.8)', margin:'2px 0 0', letterSpacing:'0.06em' }}>
+            {sorted.length} assets · LIVE
+          </p>
         </div>
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', borderRadius: 8,
-          background: 'var(--zm-surface)', border: '1px solid var(--zm-border)',
-          minWidth: isMobile ? '100%' : 200, minHeight: isMobile ? 48 : 'auto',
-        }}>
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-            <circle cx="5" cy="5" r="3.5" stroke="currentColor" strokeWidth="1.5" opacity="0.5" />
-            <line x1="8" y1="8" x2="11" y2="11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" opacity="0.5" />
-          </svg>
-          <input type="search" placeholder="Search assets..." value={query} onChange={handleSearch} aria-label="Search assets"
-            style={{ background: 'transparent', outline: 'none', border: 'none', fontFamily: 'var(--zm-font-data)', fontSize: 12, flex: 1, color: 'var(--zm-text-1)', WebkitAppearance: 'none' }} />
+        {/* Search */}
+        <div style={{ position:'relative' as const }}>
+          <input
+            type="text"
+            placeholder="Search assets…"
+            value={search}
+            onChange={handleSearch}
+            style={{
+              fontFamily:"'JetBrains Mono',monospace", fontSize:'11px',
+              background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.08)',
+              borderRadius:'8px', padding:'8px 12px 8px 32px',
+              color:'rgba(230,230,242,0.9)', outline:'none',
+              width: isMobile ? '160px' : '220px',
+            }}
+            aria-label="Search assets"
+          />
+          <span style={{ position:'absolute' as const, left:'10px', top:'50%', transform:'translateY(-50%)',
+            fontSize:'12px', color:'rgba(80,80,100,0.6)' }}>⌕</span>
         </div>
       </div>
 
-      <div style={{ background: 'var(--zm-surface)', border: '1px solid var(--zm-border)', borderRadius: 12, overflow: 'hidden' }}>
-        {headerRow}
-
-        {!selectedAsset && filtered.length > 0 && (
-          <div style={{ padding: '5px 16px', fontFamily: 'var(--zm-font-data)', fontSize: 9, color: 'var(--zm-text-3)', letterSpacing: '0.06em', borderBottom: '1px solid var(--zm-border)', background: 'var(--zm-blue-bg)' }}>
-            {'← click any row to view detail chart & order book'}
+      <div style={containerStyle}>
+        {/* Table header */}
+        {!isMobile && (
+          <div style={colHdrStyle}>
+            <SortHdr label="#" k="rank" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" width={36} />
+            <SortHdr label="Asset" k="name" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="left" width={180} />
+            <SortHdr label="Price" k="price" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} width={110} />
+            <SortHdr label="24h" k="change24h" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} width={90} />
+            <SortHdr label="7d" k="change7d" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} width={80} />
+            <SortHdr label="Mkt Cap" k="marketCap" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} width={100} />
+            <SortHdr label="Volume" k="volume24h" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} width={90} />
+            <span style={{ width:'80px', flexShrink:0, fontFamily:"'JetBrains Mono',monospace",
+              fontSize:'9px', color:'rgba(80,80,100,0.6)', textAlign:'center' }}>7D CHART</span>
           </div>
         )}
-
-        <VirtualList items={filtered} itemHeight={rowHeight} height={listHeight || 400} overscan={5} renderItem={renderRow} getKey={getKey} />
-      </div>
-
-      <AnimatePresence>
-        {selectedAsset && (
-          <AssetDetailPanel key={selectedAsset.id} asset={selectedAsset} onClose={handleClosePanel} isMobile={isMobile} isTablet={isTablet} />
+        {/* Rows */}
+        {sorted.length === 0 && assets.length === 0 ? (
+          <div style={{ display:'flex', flexDirection:'column' as const }}>
+            {Array.from({ length: 8 }, (_, i) => (
+              <div key={i} style={{ height: isMobile ? 64 : 54, borderBottom:'1px solid rgba(255,255,255,0.04)',
+                display:'flex', alignItems:'center', padding:'0 12px', gap:'12px', overflow:'hidden', position:'relative' as const }}>
+                <div style={{ width:28, height:28, borderRadius:'50%', background:'rgba(255,255,255,0.05)', flexShrink:0 }} />
+                <div style={{ flex:1, display:'flex', flexDirection:'column' as const, gap:6 }}>
+                  <div style={{ width:'40%', height:10, borderRadius:3, background:'rgba(255,255,255,0.05)' }} />
+                  <div style={{ width:'25%', height:8, borderRadius:3, background:'rgba(255,255,255,0.04)' }} />
+                </div>
+                <div style={{ width:80, height:14, borderRadius:3, background:'rgba(255,255,255,0.05)', flexShrink:0 }} />
+                <motion.div animate={{ x:['-100%','200%'] }} transition={{ duration:1.4+i*0.07, repeat:Infinity, ease:'linear' }}
+                  style={{ position:'absolute' as const, inset:0, background:'linear-gradient(90deg,transparent,rgba(0,238,255,0.04),transparent)', willChange:'transform' }} />
+              </div>
+            ))}
+          </div>
+        ) : sorted.length === 0 ? (
+          <div style={{ padding:'40px', textAlign:'center' as const,
+            fontFamily:"'JetBrains Mono',monospace", fontSize:'11px', color:'rgba(80,80,100,0.6)' }}>
+            {'No results for "' + search + '"'}
+          </div>
+        ) : (
+          <VirtualList
+            items={sorted}
+            itemHeight={rowHeight}
+            height={Math.min(sorted.length * rowHeight, window.innerHeight - 200)}
+            renderItem={renderRow}
+            getKey={(item: CryptoAsset) => item.id}
+          />
         )}
-      </AnimatePresence>
+      </div>
     </div>
   );
 });

@@ -1,306 +1,326 @@
 /**
- * Dashboard.tsx — ZERØ MERIDIAN push93
- * Bloomberg terminal grade — dense, clean, zero self-claim
- * Struktur proven push92 + visual upgrade push93
- * ZERO className | var(--zm-*) | React.memo | useMemo | mountedRef
+ * Dashboard.tsx — ZERØ MERIDIAN push130
+ * push130: Zero :any — CGMarketCoin interface replacing marketsJson.map((t: any))
+ * push110: Responsive polish — mobile 320px + desktop 1440px
+ * - React.memo + displayName ✓  rgba() only ✓  Zero className ✓
+ * - Zero hex color ✓  JetBrains Mono only ✓  Zero :any ✓
  */
 
-import React, { Suspense, memo, useMemo, useRef, useEffect, useState } from 'react';
-import { motion, useReducedMotion } from 'framer-motion';
-import Skeleton from '../components/shared/Skeleton';
-import GlassCard from '../components/shared/GlassCard';
-import MetricCard from '../components/shared/MetricCard';
-import { useCrypto } from '@/contexts/CryptoContext';
-import { formatPrice, formatCompact } from '@/lib/formatters';
-import { useBreakpoint } from '@/hooks/useBreakpoint';
+import React, { memo, useCallback, useMemo, useEffect, useRef, useState } from "react";
+import { useBreakpoint } from "@/hooks/useBreakpoint";
 
-const TradingViewChart  = React.lazy(() => import('../components/tiles/TradingViewChart'));
-const OrderBookTile     = React.lazy(() => import('../components/tiles/OrderBookTile'));
-const HeatmapTile       = React.lazy(() => import('../components/tiles/HeatmapTile'));
-const FundingRateTile   = React.lazy(() => import('../components/tiles/FundingRateTile'));
-const LiquidationTile   = React.lazy(() => import('../components/tiles/LiquidationTile'));
-const NewsTickerTile    = React.lazy(() => import('../components/tiles/NewsTickerTile'));
-const WasmOrderBook     = React.lazy(() => import('../components/tiles/WasmOrderBook'));
-const TokenTerminalTile = React.lazy(() => import('../components/tiles/TokenTerminalTile'));
-const AISignalTile      = React.lazy(() => import('../components/tiles/AISignalTile'));
+// ─── Constants ────────────────────────────────────────────────────────────────
 
-interface MetricCfg {
-  label: string; assetId: string;
-  fallbackValue: string; fallbackChange: number;
-  accentColor: string;
+const FONT = "'JetBrains Mono', monospace";
+
+const C = Object.freeze({
+  accent:      "rgba(0,238,255,1)",
+  positive:    "rgba(34,255,170,1)",
+  negative:    "rgba(255,68,136,1)",
+  warning:     "rgba(255,187,0,1)",
+  textPrimary: "rgba(240,240,248,1)",
+  textFaint:   "rgba(80,80,100,1)",
+  bgBase:      "rgba(5,7,13,1)",
+  cardBg:      "rgba(14,17,28,1)",
+  glassBg:     "rgba(255,255,255,0.04)",
+  glassBorder: "rgba(255,255,255,0.06)",
+});
+
+// ─── Raw API types ─────────────────────────────────────────────────────────────
+
+interface CGGlobalData {
+  total_market_cap:          Record<string, number>;
+  total_volume:              Record<string, number>;
+  market_cap_percentage:     Record<string, number>;
 }
 
-const METRIC_CONFIG: readonly MetricCfg[] = Object.freeze([
-  { label: 'BTC / USD',  assetId: 'bitcoin',     fallbackValue: '—', fallbackChange: 0, accentColor: 'rgba(251,191,36,1)'  },
-  { label: 'ETH / USD',  assetId: 'ethereum',    fallbackValue: '—', fallbackChange: 0, accentColor: 'rgba(96,165,250,1)'  },
-  { label: 'SOL / USD',  assetId: 'solana',      fallbackValue: '—', fallbackChange: 0, accentColor: 'rgba(167,139,250,1)' },
-  { label: 'BNB / USD',  assetId: 'binancecoin', fallbackValue: '—', fallbackChange: 0, accentColor: 'rgba(251,146,60,1)'  },
-  { label: 'Vol 24H',    assetId: '_volume',     fallbackValue: '—', fallbackChange: 0, accentColor: 'rgba(38,166,154,1)'  },
-  { label: 'Mkt Cap',    assetId: '_mcap',       fallbackValue: '—', fallbackChange: 0, accentColor: 'rgba(0,188,212,1)'   },
-  { label: 'BTC Dom.',   assetId: '_dominance',  fallbackValue: '—', fallbackChange: 0, accentColor: 'rgba(239,83,80,1)'   },
-  { label: 'Assets',     assetId: '_count',      fallbackValue: '—', fallbackChange: 0, accentColor: 'rgba(120,130,145,1)' },
-]);
+interface CGGlobalResponse {
+  data: CGGlobalData;
+}
 
-const containerV = Object.freeze({
-  hidden:  { opacity: 0 },
-  visible: { opacity: 1, transition: { staggerChildren: 0.05, delayChildren: 0.02 } },
-});
-const tileV = Object.freeze({
-  hidden:  { opacity: 0, y: 8 },
-  visible: { opacity: 1, y: 0, transition: { duration: 0.26, ease: [0.22, 1, 0.36, 1] } },
-});
+interface FnGItem {
+  value:                string;
+  value_classification: string;
+}
 
-// ── Section header ────────────────────────────────────────────────────────────
-const SectionHead = memo(({ label, accent }: { label: string; accent?: string }) => {
-  const a = accent ?? 'rgba(0,238,255,0.8)';
+interface FnGResponse {
+  data: FnGItem[];
+}
+
+interface CGMarketCoin {
+  id:                                     string;
+  symbol:                                 string;
+  name:                                   string;
+  current_price:                          number;
+  price_change_percentage_24h:            number | null;
+}
+
+// ─── App types ────────────────────────────────────────────────────────────────
+
+interface GlobalData {
+  totalMarketCap: number;
+  btcDominance:   number;
+  ethDominance:   number;
+  totalVolume24h: number;
+  fngValue:       number;
+  fngLabel:       string;
+  lastUpdated:    number;
+}
+
+interface TopMover {
+  symbol:   string;
+  name:     string;
+  price:    number;
+  change24h: number;
+}
+
+interface DashboardData {
+  global:     GlobalData;
+  topGainers: TopMover[];
+  topLosers:  TopMover[];
+}
+
+// ─── MetricCard ───────────────────────────────────────────────────────────────
+
+interface MetricCardProps { label: string; value: string; sub?: string; accent?: boolean; }
+const MetricCard = memo(({ label, value, sub, accent }: MetricCardProps) => {
+  const s = useMemo(() => ({
+    card:  { background: C.cardBg, border: `1px solid ${C.glassBorder}`, borderRadius: 12, padding: 16, display: "flex" as const, flexDirection: "column" as const, gap: 8 },
+    label: { fontFamily: FONT, fontSize: 9, fontWeight: 400, letterSpacing: "0.12em", textTransform: "uppercase" as const, color: C.textFaint },
+    value: { fontFamily: FONT, fontSize: 14, fontWeight: 700, color: accent ? C.accent : C.textPrimary },
+    sub:   { fontFamily: FONT, fontSize: 10, color: C.textFaint },
+  }), [accent]);
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, marginTop: 20 }}>
-      <div style={{
-        width: 2, height: 11, borderRadius: 1, flexShrink: 0,
-        background: a, boxShadow: `0 0 5px ${a}55`,
-      }} />
-      <span style={{
-        fontFamily: 'var(--zm-font-data)',
-        fontSize: 9, fontWeight: 700, letterSpacing: '0.14em',
-        textTransform: 'uppercase' as const,
-        color: 'var(--zm-text-3)',
-      }}>{label}</span>
-      <div style={{ flex: 1, height: 1, background: 'var(--zm-divider)' }} />
+    <div style={s.card}>
+      <span style={s.label}>{label}</span>
+      <span style={s.value}>{value}</span>
+      {sub && <span style={s.sub}>{sub}</span>}
     </div>
   );
 });
-SectionHead.displayName = 'SectionHead';
+MetricCard.displayName = "MetricCard";
 
-const TileSkeleton = memo(({ height = 320 }: { height?: number }) => (
-  <GlassCard style={{ height, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-    <Skeleton.Card />
-  </GlassCard>
+// ─── MoverRow ─────────────────────────────────────────────────────────────────
+
+interface MoverRowProps { mover: TopMover; }
+const MoverRow = memo(({ mover }: MoverRowProps) => {
+  const [hovered, setHovered] = useState(false);
+  const onEnter = useCallback(() => setHovered(true),  []);
+  const onLeave = useCallback(() => setHovered(false), []);
+  const changeColor = mover.change24h >= 0 ? C.positive : C.negative;
+  const rowStyle = useMemo(() => ({
+    display: "flex" as const, alignItems: "center" as const, justifyContent: "space-between" as const,
+    padding: "0 16px", height: 50,
+    borderBottom: `1px solid ${C.glassBorder}`,
+    background: hovered ? "rgba(255,255,255,0.03)" : "transparent",
+    transition: "background 0.15s ease",
+  }), [hovered]);
+  return (
+    <div style={rowStyle} onMouseEnter={onEnter} onMouseLeave={onLeave}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+        <span style={{ fontFamily: FONT, fontSize: 12, fontWeight: 700, color: C.textPrimary }}>{mover.symbol}</span>
+        <span style={{ fontFamily: FONT, fontSize: 9, color: C.textFaint }}>{mover.name}</span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3 }}>
+        <span style={{ fontFamily: FONT, fontSize: 12, fontWeight: 600, color: C.textPrimary }}>
+          ${mover.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+        </span>
+        <span style={{ fontFamily: FONT, fontSize: 10, fontWeight: 700, color: changeColor }}>
+          {mover.change24h >= 0 ? "+" : ""}{mover.change24h.toFixed(2)}%
+        </span>
+      </div>
+    </div>
+  );
+});
+MoverRow.displayName = "MoverRow";
+
+// ─── EmptyState ───────────────────────────────────────────────────────────────
+
+interface EmptyStateProps { section: string; onRetry: () => void; }
+const EmptyState = memo(({ section, onRetry }: EmptyStateProps) => (
+  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "48px 24px", gap: 12 }}>
+    <span style={{ fontSize: 28, opacity: 0.25 }}>📊</span>
+    <span style={{ fontFamily: FONT, fontSize: 12, color: C.textFaint, textAlign: "center" }}>
+      {section} data unavailable.
+    </span>
+    <button
+      onClick={onRetry}
+      style={{ fontFamily: FONT, fontSize: 10, fontWeight: 600, color: C.accent, background: "rgba(0,238,255,0.08)", border: "1px solid rgba(0,238,255,0.2)", borderRadius: 6, padding: "5px 12px", cursor: "pointer" }}
+    >
+      Retry
+    </button>
+  </div>
 ));
-TileSkeleton.displayName = 'TileSkeleton';
+EmptyState.displayName = "EmptyState";
 
-// ── Live Clock ────────────────────────────────────────────────────────────────
-const LiveClock = memo(() => {
-  const mountedRef = useRef(true);
-  const [time, setTime] = useState(() =>
-    new Date().toLocaleTimeString('en-US', { hour12: false, timeZone: 'UTC' })
-  );
-  useEffect(() => {
-    mountedRef.current = true;
-    const id = setInterval(() => {
-      if (mountedRef.current) setTime(new Date().toLocaleTimeString('en-US', { hour12: false, timeZone: 'UTC' }));
-    }, 1000);
-    return () => { mountedRef.current = false; clearInterval(id); };
-  }, []);
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-      <motion.div
-        style={{ width: 4, height: 4, borderRadius: '50%', background: 'rgba(38,166,154,1)', flexShrink: 0, boxShadow: '0 0 5px rgba(38,166,154,0.6)' }}
-        animate={{ opacity: [1, 0.2, 1] }}
-        transition={{ duration: 1.8, repeat: Infinity }}
-      />
-      <span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 11, fontWeight: 600, color: 'var(--zm-text-2)', letterSpacing: '0.06em' }}>
-        {time}
-        <span style={{ color: 'var(--zm-text-4)', fontWeight: 400, fontSize: 9, marginLeft: 3 }}>UTC</span>
-      </span>
-    </div>
-  );
-});
-LiveClock.displayName = 'LiveClock';
+// ─── Dashboard (Main) ─────────────────────────────────────────────────────────
 
-// ── Ticker strip ──────────────────────────────────────────────────────────────
-const TickerStrip = memo(() => {
-  const { assets } = useCrypto();
-  const top10 = useMemo(() => assets.slice(0, 10), [assets]);
-  if (top10.length === 0) return null;
-  return (
-    <div style={{
-      display: 'flex', gap: 3, overflowX: 'auto', scrollbarWidth: 'none',
-      maskImage: 'linear-gradient(90deg,transparent,black 2%,black 98%,transparent)',
-      WebkitMaskImage: 'linear-gradient(90deg,transparent,black 2%,black 98%,transparent)',
-    }} role="region" aria-label="Top assets">
-      {top10.map(asset => {
-        const pos = asset.change24h >= 0;
-        return (
-          <div key={asset.id} style={{
-            flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 6,
-            padding: '4px 8px', borderRadius: 3,
-            background: 'var(--zm-card-bg)',
-            border: `1px solid ${pos ? 'rgba(38,166,154,0.12)' : 'rgba(239,83,80,0.12)'}`,
-          }}>
-            <span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 8.5, fontWeight: 700, color: 'var(--zm-text-3)', letterSpacing: '0.1em' }}>
-              {asset.symbol.toUpperCase()}
-            </span>
-            <span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 10.5, fontWeight: 600, color: 'var(--zm-text-1)', letterSpacing: '-0.01em' }}>
-              {formatPrice(asset.price)}
-            </span>
-            <span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 9.5, fontWeight: 600, color: pos ? 'rgba(38,166,154,1)' : 'rgba(239,83,80,1)' }}>
-              {(pos ? '+' : '') + asset.change24h.toFixed(2) + '%'}
-            </span>
-          </div>
-        );
-      })}
-    </div>
-  );
-});
-TickerStrip.displayName = 'TickerStrip';
-
-// ── Live Metric Card ──────────────────────────────────────────────────────────
-const LiveMetricCard = memo(({ config }: { config: MetricCfg }) => {
-  const { assets } = useCrypto();
-
-  const { value, change } = useMemo(() => {
-    if (config.assetId === '_volume') {
-      const t = assets.reduce((s, a) => s + (a.volume24h ?? 0), 0);
-      return t > 0 ? { value: formatCompact(t), change: 0 } : { value: config.fallbackValue, change: config.fallbackChange };
-    }
-    if (config.assetId === '_mcap') {
-      const t = assets.reduce((s, a) => s + (a.marketCap ?? 0), 0);
-      return t > 0 ? { value: formatCompact(t), change: 0 } : { value: config.fallbackValue, change: config.fallbackChange };
-    }
-    if (config.assetId === '_dominance') {
-      const btc   = assets.find(a => a.id === 'bitcoin');
-      const total = assets.reduce((s, a) => s + (a.marketCap ?? 0), 0);
-      if (btc && total > 0) return { value: ((btc.marketCap / total) * 100).toFixed(1) + '%', change: 0 };
-      return { value: config.fallbackValue, change: config.fallbackChange };
-    }
-    if (config.assetId === '_count') {
-      return { value: assets.length > 0 ? assets.length.toLocaleString() : config.fallbackValue, change: 0 };
-    }
-    const asset = assets.find(a => a.id === config.assetId);
-    if (!asset) return { value: config.fallbackValue, change: config.fallbackChange };
-    return { value: formatPrice(asset.price), change: asset.change24h ?? 0 };
-  }, [assets, config]);
-
-  return (
-    <Suspense fallback={<Skeleton.Card />}>
-      <MetricCard label={config.label} value={value} change={change} accentColor={config.accentColor} />
-    </Suspense>
-  );
-});
-LiveMetricCard.displayName = 'LiveMetricCard';
-
-// ── Dashboard ─────────────────────────────────────────────────────────────────
 const Dashboard = memo(() => {
-  const rm = useReducedMotion();
-  const mountedRef = useRef(true);
-  const [isReady, setIsReady] = useState(false);
   const { isMobile, isTablet } = useBreakpoint();
-  void rm;
+  const [data, setData]       = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState<string | null>(null);
+  const mountedRef            = useRef(true);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      // CoinGecko free tier can be rate-limited; try with CORS proxy as fallback
+      const CG_GLOBAL  = 'https://api.coingecko.com/api/v3/global';
+      const CG_MARKETS = 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&sparkline=false&price_change_percentage=24h';
+      const FNG_URL    = 'https://api.alternative.me/fng/?limit=1';
+
+      async function safeFetch(url: string): Promise<Response> {
+        const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r;
+      }
+
+      const [globalRes, fngRes, marketsRes] = await Promise.all([
+        safeFetch(CG_GLOBAL),
+        safeFetch(FNG_URL),
+        safeFetch(CG_MARKETS),
+      ]);
+      if (!mountedRef.current) return;
+
+      const [globalJson, fngJson, marketsJson] = await Promise.all([
+        globalRes.json()  as Promise<CGGlobalResponse>,
+        fngRes.json()     as Promise<FnGResponse>,
+        marketsRes.json() as Promise<CGMarketCoin[]>,
+      ]);
+      if (!mountedRef.current) return;
+
+      const g = globalJson.data;
+      const movers: TopMover[] = marketsJson.map((t): TopMover => ({
+        symbol:   t.symbol.toUpperCase(),
+        name:     t.name,
+        price:    t.current_price,
+        change24h: t.price_change_percentage_24h ?? 0,
+      }));
+      const sorted = [...movers].sort((a, b) => b.change24h - a.change24h);
+
+      setData({
+        global: {
+          totalMarketCap: g.total_market_cap.usd,
+          btcDominance:   g.market_cap_percentage.btc,
+          ethDominance:   g.market_cap_percentage.eth,
+          totalVolume24h: g.total_volume.usd,
+          fngValue:       parseInt(fngJson.data[0].value, 10),
+          fngLabel:       fngJson.data[0].value_classification,
+          lastUpdated:    Date.now(),
+        },
+        topGainers: sorted.slice(0, 5),
+        topLosers:  sorted.slice(-5).reverse(),
+      });
+    } catch (e) {
+      if (!mountedRef.current) return;
+      setError(`Failed to load dashboard: ${e instanceof Error ? e.message : "Unknown error"}`);
+    } finally {
+      if (mountedRef.current) setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
-    const id = requestAnimationFrame(() => { if (mountedRef.current) setIsReady(true); });
-    return () => { mountedRef.current = false; cancelAnimationFrame(id); };
+    fetchData();
+    const interval = setInterval(() => { if (mountedRef.current) fetchData(); }, 60_000);
+    return () => { mountedRef.current = false; clearInterval(interval); };
+  }, [fetchData]);
+
+  const lastUpdatedStr = useMemo(() => {
+    if (!data?.global.lastUpdated) return "—";
+    const diff = Math.floor((Date.now() - data.global.lastUpdated) / 1000);
+    if (diff < 60) return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    return `${Math.floor(diff / 3600)}h ago`;
+  }, [data]);
+
+  const fmtBig = useCallback((n: number) => {
+    if (n >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
+    if (n >= 1e9)  return `$${(n / 1e9).toFixed(2)}B`;
+    return `$${(n / 1e6).toFixed(0)}M`;
   }, []);
 
-  // Grid styles
-  const grid4S = useMemo(() => ({
-    display: 'grid',
-    gridTemplateColumns: isMobile ? 'repeat(2,1fr)' : isTablet ? 'repeat(2,1fr)' : 'repeat(4,1fr)',
-    gap: 8,
-  }), [isMobile, isTablet]);
-
-  const mainGridS = useMemo(() => ({
-    display: 'grid',
-    gridTemplateColumns: isMobile ? '1fr' : '2fr 1fr',
-    gap: 10,
+  const pageStyle = useMemo(() => ({
+    background: C.bgBase, minHeight: "100vh", color: C.textPrimary, fontFamily: FONT,
+    padding: isMobile ? "16px 12px" : "20px 16px",
   }), [isMobile]);
 
-  const triGridS = useMemo(() => ({
-    display: 'grid',
-    gridTemplateColumns: isMobile ? '1fr' : isTablet ? 'repeat(2,1fr)' : 'repeat(3,1fr)',
-    gap: 10,
-  }), [isMobile, isTablet]);
+  const metricsGridCols = isMobile ? "repeat(2,1fr)" : isTablet ? "repeat(3,1fr)" : "repeat(5,1fr)";
+  const moversGridCols  = isMobile ? "1fr" : "1fr 1fr";
 
-  const dualGridS = useMemo(() => ({
-    display: 'grid',
-    gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr',
-    gap: 10,
-  }), [isMobile]);
+  const sectionCardStyle = useMemo(() => ({
+    background: C.glassBg, border: `1px solid ${C.glassBorder}`, borderRadius: 12, overflow: "hidden" as const,
+  }), []);
 
-  if (!isReady) return <Skeleton.Page />;
+  const handleRefresh = useCallback(() => fetchData(), [fetchData]);
 
   return (
-    <motion.div variants={containerV} initial="hidden" animate="visible" role="main" aria-label="Dashboard">
-
-      {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <motion.div variants={tileV} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 10 }}>
+    <div style={pageStyle}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 20, gap: 12 }}>
         <div>
-          <h1 style={{
-            fontFamily: 'var(--zm-font-ui)', fontSize: isMobile ? 16 : 18,
-            fontWeight: 600, color: 'var(--zm-text-1)', margin: 0, letterSpacing: '-0.02em',
-          }}>
-            Dashboard
-          </h1>
-          <span style={{ fontFamily: 'var(--zm-font-data)', fontSize: 8.5, color: 'var(--zm-text-4)', letterSpacing: '0.14em', textTransform: 'uppercase' as const, display: 'block', marginTop: 2 }}>
-            ZERØ MERIDIAN · Binance Live
-          </span>
+          <h1 style={{ fontFamily: FONT, fontSize: isMobile ? 16 : 20, fontWeight: 700, letterSpacing: "0.06em", color: C.textPrimary, margin: 0 }}>Dashboard</h1>
+          <p style={{ fontFamily: FONT, fontSize: 9, letterSpacing: "0.18em", textTransform: "uppercase", color: C.textFaint, margin: "6px 0 0" }}>Market overview · Updated {lastUpdatedStr}</p>
         </div>
-        <LiveClock />
-      </motion.div>
+        <button
+          style={{ fontFamily: FONT, fontSize: 10, fontWeight: 600, color: C.accent, background: "rgba(0,238,255,0.08)", border: "1px solid rgba(0,238,255,0.2)", borderRadius: 6, padding: "6px 12px", cursor: "pointer", flexShrink: 0 }}
+          onClick={handleRefresh}
+        >
+          ↻ Refresh
+        </button>
+      </div>
 
-      {/* ── Ticker Strip ────────────────────────────────────────────────────── */}
-      <motion.div variants={tileV} style={{ marginBottom: 2 }}>
-        <TickerStrip />
-      </motion.div>
-
-      {/* ── 8 Metric Cards ──────────────────────────────────────────────────── */}
-      <motion.div variants={tileV} aria-label="Key metrics">
-        <SectionHead label="Key Metrics — Binance Live" />
-        <div style={{ ...grid4S, marginBottom: 8 }}>
-          {METRIC_CONFIG.slice(0, 4).map(cfg => <LiveMetricCard key={cfg.assetId} config={cfg} />)}
+      {loading && (
+        <div style={{ padding: "80px 24px", textAlign: "center", fontFamily: FONT, fontSize: 11, color: C.textFaint }}>
+          Loading market data...
         </div>
-        <div style={{ ...grid4S, marginBottom: 4 }}>
-          {METRIC_CONFIG.slice(4).map(cfg => <LiveMetricCard key={cfg.assetId} config={cfg} />)}
-        </div>
-      </motion.div>
+      )}
 
-      {/* ── Price Action ────────────────────────────────────────────────────── */}
-      <motion.div variants={tileV}>
-        <SectionHead label="Price Action · TradingView" />
-        <div style={mainGridS}>
-          <Suspense fallback={<TileSkeleton height={420} />}><TradingViewChart height={420} /></Suspense>
-          <Suspense fallback={<TileSkeleton height={420} />}><OrderBookTile /></Suspense>
-        </div>
-      </motion.div>
+      {!loading && error && <EmptyState section="Dashboard" onRetry={fetchData} />}
 
-      {/* ── Market Intelligence ──────────────────────────────────────────────── */}
-      <motion.div variants={tileV}>
-        <SectionHead label="Market Intelligence" accent="rgba(239,83,80,0.8)" />
-        <div style={triGridS}>
-          <Suspense fallback={<TileSkeleton height={240} />}><HeatmapTile /></Suspense>
-          <Suspense fallback={<TileSkeleton height={240} />}><FundingRateTile /></Suspense>
-          <Suspense fallback={<TileSkeleton height={240} />}><LiquidationTile /></Suspense>
-        </div>
-      </motion.div>
+      {!loading && !error && data && (
+        <>
+          {/* Global metrics */}
+          <div style={{ display: "grid", gridTemplateColumns: metricsGridCols, gap: 12, marginBottom: 20 }}>
+            <MetricCard label="Total Market Cap" value={fmtBig(data.global.totalMarketCap)} />
+            <MetricCard label="24H Volume"        value={fmtBig(data.global.totalVolume24h)} />
+            <MetricCard label="BTC Dominance"     value={`${data.global.btcDominance.toFixed(1)}%`} />
+            <MetricCard label="ETH Dominance"     value={`${data.global.ethDominance.toFixed(1)}%`} />
+            <MetricCard label="Fear & Greed"      value={`${data.global.fngValue} · ${data.global.fngLabel}`} accent />
+          </div>
 
-      {/* ── Order Flow Depth ─────────────────────────────────────────────────── */}
-      <motion.div variants={tileV}>
-        <SectionHead label="Order Flow Depth · WASM" accent="rgba(130,80,220,0.8)" />
-        <div style={dualGridS}>
-          <Suspense fallback={<TileSkeleton height={480} />}><WasmOrderBook symbol="BTCUSDT" basePrice={67840} /></Suspense>
-          <Suspense fallback={<TileSkeleton height={480} />}><WasmOrderBook symbol="ETHUSDT" basePrice={3521} /></Suspense>
-        </div>
-      </motion.div>
+          {/* Movers */}
+          <div style={{ display: "grid", gridTemplateColumns: moversGridCols, gap: 12 }}>
+            <div style={sectionCardStyle}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", borderBottom: `1px solid ${C.glassBorder}` }}>
+                <span style={{ fontFamily: FONT, fontSize: 9, letterSpacing: "0.18em", textTransform: "uppercase", color: C.positive }}>Top Gainers</span>
+                <span style={{ fontFamily: FONT, fontSize: 9, color: C.textFaint }}>24h</span>
+              </div>
+              {data.topGainers.length === 0
+                ? <EmptyState section="Gainers" onRetry={fetchData} />
+                : data.topGainers.map(m => <MoverRow key={m.symbol} mover={m} />)
+              }
+            </div>
+            <div style={sectionCardStyle}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", borderBottom: `1px solid ${C.glassBorder}` }}>
+                <span style={{ fontFamily: FONT, fontSize: 9, letterSpacing: "0.18em", textTransform: "uppercase", color: C.negative }}>Top Losers</span>
+                <span style={{ fontFamily: FONT, fontSize: 9, color: C.textFaint }}>24h</span>
+              </div>
+              {data.topLosers.length === 0
+                ? <EmptyState section="Losers" onRetry={fetchData} />
+                : data.topLosers.map(m => <MoverRow key={m.symbol} mover={m} />)
+              }
+            </div>
+          </div>
+        </>
+      )}
 
-      {/* ── Protocol Revenue + AI Signals ────────────────────────────────────── */}
-      <motion.div variants={tileV}>
-        <SectionHead label="Protocol Revenue · AI Signals" accent="rgba(38,166,154,0.8)" />
-        <div style={dualGridS}>
-          <Suspense fallback={<TileSkeleton height={380} />}><TokenTerminalTile /></Suspense>
-          <Suspense fallback={<TileSkeleton height={380} />}><AISignalTile /></Suspense>
-        </div>
-      </motion.div>
-
-      {/* ── News ─────────────────────────────────────────────────────────────── */}
-      <motion.div variants={tileV}>
-        <SectionHead label="Market News" />
-        <Suspense fallback={<TileSkeleton height={72} />}><NewsTickerTile /></Suspense>
-      </motion.div>
-
-    </motion.div>
+      {!loading && !error && !data && <EmptyState section="Dashboard" onRetry={fetchData} />}
+    </div>
   );
 });
+Dashboard.displayName = "Dashboard";
 
-Dashboard.displayName = 'Dashboard';
 export default Dashboard;
